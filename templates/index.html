@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <h1 class="title">Analise antes de postar.</h1>
+      <p class="subtitle">Proteja sua imagem. Maximize seu alcance. IA que orienta você em segundos.</p>
+    </div>
+    <div class="hero-card">
+      <div class="hero-inner">
+        <p class="muted">Bem-vindo ao INFLUE</p>
+        <h2 class="card-title">Faça upload e receba orientação inteligente</h2>
+        <div class="actions">
+          <!-- Foto -->
+          <form id="form-photo" class="upload" action="/upload/photo" method="post" enctype="multipart/form-data">
+            <input id="photo-input" type="file" name="photo" accept="image/*" hidden />
+            <button type="button" class="btn btn-ghost" id="btn-photo">Faça o upload da sua foto</button>
+          </form>
+
+          <!-- Texto -->
+          <form id="form-text" class="upload" action="/upload/text" method="post" enctype="multipart/form-data">
+            <input id="textfile-input" type="file" name="textfile" accept=".txt,.md,.rtf,.docx,.json,.csv" hidden />
+            <button type="button" class="btn btn-ghost" id="btn-text">Faça o upload do seu texto</button>
+          </form>
+        </div>
+        <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
