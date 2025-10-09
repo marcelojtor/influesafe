@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>INFLUE — Assistente de Imagem & Engajamento</title>
+  <meta name="description" content="Analise sua foto ou texto antes de postar. Proteja sua imagem e alavanque seu engajamento." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container flex between center-v">
+      <a class="brand flex center-v" href="/" aria-label="Ir para início">
+        <div class="logo">I</div>
+        <span class="brandtext">INFLUE</span>
+      </a>
+      <nav class="auth">
+        <a href="/login" class="link">Entrar</a>
+        <a href="/signup" class="btn btn-primary">Criar conta</a>
+      </nav>
+    </div>
+  </header>
+
+  {% block content %}{% endblock %}
+
+  <footer class="footer">
+    <div class="container flex between center-v wrap">
+      <small>© <span id="year"></span> INFLUE. Todos os direitos reservados.</small>
+      <small class="muted">Créditos disponíveis: <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">{{ credits_left|default(0) }}</strong></small>
+    </div>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+</body>
+</html>
