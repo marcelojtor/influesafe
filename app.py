@@ -36,7 +36,7 @@ from utils.rate_limit import SimpleRateLimiter
 
 # ------ Serviços ------
 from services.openai_client import OpenAIClient
-from payments import get_payment_provider  # <-- import corrigido
+from payments import get_payment_provider  # import correto
 
 # ==========================================================
 # Config
@@ -377,7 +377,8 @@ def purchase(user_id: Optional[int]):
 
 @app.post("/webhook/pagseguro")
 def webhook_pagseguro():
-    return jsonify({"ok": False, "error": "Webhook PagSeguro não implementado nesta branch."}), 501)
+    # Ainda stubado no provider/pagseguro.py
+    return jsonify({"ok": False, "error": "Webhook PagSeguro não implementado nesta branch."}), 501
 
 # ==========================================================
 # Servir arquivos temporários (debug/local)
