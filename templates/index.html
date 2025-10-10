@@ -5,25 +5,69 @@
     <div class="hero-copy">
       <h1 class="title">Analise antes de postar.</h1>
       <p class="subtitle">Proteja sua imagem. Maximize seu alcance. IA que orienta você em segundos.</p>
+      <ul class="muted" style="margin:1rem 0 0 1rem;padding:0;line-height:1.6;">
+        <li>3 créditos grátis por sessão (MVP).</li>
+        <li>Envie uma <strong>foto</strong> ou uma <strong>legenda/texto</strong>.</li>
+        <li>Resultado imediato com <em>score de risco</em>, <em>tags</em> e <em>recomendações</em>.</li>
+      </ul>
     </div>
+
     <div class="hero-card">
       <div class="hero-inner">
         <p class="muted">Bem-vindo ao INFLUE</p>
         <h2 class="card-title">Faça upload e receba orientação inteligente</h2>
+
+        <!-- Ações -->
         <div class="actions">
-          <!-- Foto -->
-          <form id="form-photo" class="upload" action="/upload/photo" method="post" enctype="multipart/form-data">
+          <!-- FOTO -->
+          <form id="form-photo" class="upload" action="/analyze_photo" method="post" enctype="multipart/form-data">
             <input id="photo-input" type="file" name="photo" accept="image/*" hidden />
-            <button type="button" class="btn btn-ghost" id="btn-photo">Faça o upload da sua foto</button>
+            <button type="button" class="btn btn-ghost" id="btn-photo" aria-controls="photo-input">
+              Enviar foto (JPG/PNG)
+            </button>
           </form>
 
-          <!-- Texto -->
-          <form id="form-text" class="upload" action="/upload/text" method="post" enctype="multipart/form-data">
-            <input id="textfile-input" type="file" name="textfile" accept=".txt,.md,.rtf,.docx,.json,.csv" hidden />
-            <button type="button" class="btn btn-ghost" id="btn-text">Faça o upload do seu texto</button>
+          <!-- TEXTO -->
+          <form id="form-text" class="upload" action="/analyze_text" method="post" enctype="application/json">
+            <button type="button" class="btn btn-ghost" id="btn-text">
+              Enviar texto/legenda
+            </button>
           </form>
         </div>
+
+        <!-- Campo de texto (mobile-first) -->
+        <div class="upload" style="margin-top:.75rem;">
+          <label for="textcontent" class="muted" style="display:block;margin-bottom:.35rem;">Cole sua legenda/texto:</label>
+          <textarea id="textcontent" name="textcontent" rows="4" placeholder="Digite ou cole aqui..."
+            style="width:100%;resize:vertical;border-radius:12px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);padding:.8rem;font-family:inherit;"></textarea>
+          <div style="display:flex;gap:.5rem;justify-content:flex-end;margin-top:.5rem;">
+            <button type="button" class="btn btn-primary" id="btn-submit-text">Analisar texto</button>
+          </div>
+        </div>
+
+        <!-- Feedback de envio -->
         <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
+
+        <!-- Resultado de análise -->
+        <div id="analysis-output" style="margin-top:1rem;display:none;">
+          <div style="border-top:1px solid var(--border);padding-top:1rem;margin-top:1rem;">
+            <h3 style="margin:.25rem 0 0;font-size:1.05rem;">Resultado da análise</h3>
+            <p class="muted" id="analysis-summary" style="margin:.25rem 0 .5rem;"></p>
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;margin:.5rem 0;">
+              <div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:.6rem .75rem;">
+                <strong>Score de risco:</strong> <span id="analysis-score">—</span>/100
+              </div>
+              <div style="background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:.6rem .75rem;">
+                <strong>Tags:</strong> <span id="analysis-tags">—</span>
+              </div>
+            </div>
+            <div>
+              <strong>Recomendações:</strong>
+              <ol id="analysis-recs" style="margin:.5rem 0 0 1.2rem;"></ol>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
