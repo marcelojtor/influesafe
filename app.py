@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import os
-import io
 import hmac
 import json
 import uuid
 import hashlib
 from datetime import datetime
 from functools import wraps
-from typing import Optional, Tuple
+from typing import Optional
 
 from flask import (
     Flask,
@@ -23,25 +22,21 @@ from werkzeug.utils import secure_filename
 # ------ DB (estrutura atual: sqlite, sem SQLAlchemy) ------
 from db import init_db
 from db.models import (
-    # sessões / usuários / análises / compras
     get_or_create_session,
     consume_session_credit_atomic,
     consume_user_credit_atomic,
     record_analysis,
     get_user_by_email,
     create_user,
-    increment_user_credits,
-    create_purchase,
 )
 
-# ------ Utils fornecidos ------
+# ------ Utils ------
 from utils.security import hash_ip, hash_ua, hash_password, verify_password
 from utils.rate_limit import SimpleRateLimiter
 
 # ------ Serviços ------
 from services.openai_client import OpenAIClient
-from payments import get_provider as get_payment_provider
-
+from payments import get_payment_provider  # <-- import corrigido
 
 # ==========================================================
 # Config
@@ -78,7 +73,6 @@ rate_limiter = SimpleRateLimiter(
     max_requests=RATE_LIMIT_PER_MINUTE,
     min_interval_s=RATE_LIMIT_MIN_INTERVAL_MS / 1000.0,
 )
-
 
 # ==========================================================
 # Helpers de sessão e auth (MVP)
@@ -145,7 +139,6 @@ def rate_limit(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-
 # ==========================================================
 # Rotas Web (home/landing)
 # ==========================================================
@@ -156,7 +149,7 @@ def home():
     # garante cookie de sessão se não existir
     if not _get_session_id():
         sid = str(uuid.uuid4())
-        get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)  # cria com créditos grátis
+        get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
         _ensure_session_cookie(resp, sid)
     return resp
 
@@ -170,7 +163,6 @@ def privacy():
 @app.get("/health")
 def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
-
 
 # ==========================================================
 # Status de créditos (sessão vs usuário)
@@ -201,7 +193,6 @@ def credits_status():
 
     return jsonify({"ok": True, "data": {"session": session_credits, "user": user_credits}})
 
-
 # ==========================================================
 # Auth simples (email + senha)
 # ==========================================================
@@ -216,11 +207,8 @@ def auth_register():
     if get_user_by_email(email):
         return jsonify({"ok": False, "error": "Email já cadastrado."}), 409
 
-    # utils.hash_password -> (salt, hash_hex). Guardamos como "salt$hash"
     salt, hashed = hash_password(password)
     user_id = create_user(email=email, password_hash=f"{salt}${hashed}", credits=0)
-
-    # migra sessão anon para usuário (só transfere saldo temp futuramente, se desejar)
     token = _make_token(user_id)
     return jsonify({"ok": True, "token": token, "user_id": user_id})
 
@@ -287,7 +275,6 @@ def user_profile(user_id: Optional[int]):
 
     return jsonify({"ok": True, "data": {"logged_in": True, "credits_remaining": credits_remaining, "history": history}})
 
-
 # ==========================================================
 # Analyze Photo / Text
 # ==========================================================
@@ -312,20 +299,17 @@ def analyze_photo(user_id: Optional[int]):
     if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
         return jsonify({"ok": False, "error": "Formato inválido. Use JPG/PNG."}), 400
 
-    # tamanho
     file.seek(0, os.SEEK_END)
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_UPLOAD_MB:
         return jsonify({"ok": False, "error": f"Arquivo excede {MAX_UPLOAD_MB}MB."}), 400
 
-    # salvar temporário
     session_dir = os.path.join(STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
     save_path = os.path.join(session_dir, filename)
     file.save(save_path)
 
-    # consumir crédito
     ok = False
     if user_id:
         ok = consume_user_credit_atomic(user_id)
@@ -334,12 +318,10 @@ def analyze_photo(user_id: Optional[int]):
     if not ok:
         return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
 
-    # chamar IA
     result = ai_client.analyze_image(save_path)
     if not result.get("ok"):
         return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
 
-    # persistir análise (MVP)
     meta = json.dumps({"filename": filename})
     tags = json.dumps(result.get("tags", []))
     score = int(result.get("score_risk", 0))
@@ -377,7 +359,6 @@ def analyze_text(user_id: Optional[int]):
 
     return jsonify({"ok": True, "analysis": result})
 
-
 # ==========================================================
 # Pagamentos (Mock + PagSeguro stub)
 # ==========================================================
@@ -391,15 +372,12 @@ def purchase(user_id: Optional[int]):
     package = int(data.get("package") or 10)  # 10, 20, 50
 
     provider = get_payment_provider()
-    # Nosso mock usa start_checkout() e já credita; o stub do PagSeguro retornará erro controlado
     checkout = provider.start_checkout(user_id=user_id, package=package)
     return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
 
 @app.post("/webhook/pagseguro")
 def webhook_pagseguro():
-    # Ainda stubado no provider/pagseguro.py
-    return jsonify({"ok": False, "error": "Webhook PagSeguro não implementado nesta branch."}), 501
-
+    return jsonify({"ok": False, "error": "Webhook PagSeguro não implementado nesta branch."}), 501)
 
 # ==========================================================
 # Servir arquivos temporários (debug/local)
@@ -407,7 +385,6 @@ def webhook_pagseguro():
 @app.get("/storage/temp/<session_id>/<path:fname>")
 def serve_temp(session_id, fname):
     return send_from_directory(os.path.join(STORAGE_DIR, session_id), fname)
-
 
 # ==========================================================
 # Boot local
