@@ -19,7 +19,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-# ------ DB (estrutura atual: sqlite, sem SQLAlchemy) ------
+# ------ DB (sqlite, sem SQLAlchemy) ------
 from db import init_db
 from db.models import (
     get_or_create_session,
@@ -36,7 +36,7 @@ from utils.rate_limit import SimpleRateLimiter
 
 # ------ Serviços ------
 from services.openai_client import OpenAIClient
-from payments import get_payment_provider  # import correto
+from payments import get_payment_provider  # garante que payments/__init__.py expose get_payment_provider
 
 # ==========================================================
 # Config
@@ -46,7 +46,6 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-influe")
 
 # Políticas / Operação
 FREE_CREDITS = int(os.environ.get("FREE_CREDITS", "3"))
-FREE_CREDITS_COOLDOWN_HOURS = int(os.environ.get("FREE_CREDITS_COOLDOWN_HOURS", "24"))
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "4"))
 TEMP_RETENTION_DAYS = int(os.environ.get("TEMP_RETENTION_DAYS", "7"))
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "6"))
@@ -57,14 +56,14 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_DIR = os.path.join(BASE_DIR, "storage", "temp")
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
-# Inicializa DB (idempotente)
+# Inicializa DB
 try:
     init_db()
     print("[BOOT] DB inicializado.")
 except Exception as e:
     print(f"[BOOT][WARN] init_db falhou: {e}")
 
-# IA client (stub seguro se não houver OPENAI_API_KEY)
+# IA client (stub por padrão)
 ai_client = OpenAIClient()
 
 # Rate limiter simples
@@ -75,7 +74,7 @@ rate_limiter = SimpleRateLimiter(
 )
 
 # ==========================================================
-# Helpers de sessão e auth (MVP)
+# Helpers de sessão e auth
 # ==========================================================
 def _ip_hash() -> str:
     ip = request.headers.get("X-Forwarded-For", request.remote_addr) or ""
@@ -140,13 +139,72 @@ def rate_limit(fn):
     return wrapper
 
 # ==========================================================
+# Seed do ADMIN (admin@gmail.com / @123456)
+# ==========================================================
+def _seed_admin_if_missing():
+    """
+    Cria usuário admin com muitos créditos se ainda não existir.
+    Email: admin@gmail.com
+    Senha: @123456
+    """
+    from db.models import db_cursor  # import local
+
+    admin = get_user_by_email("admin@gmail.com")
+    if admin:
+        return
+
+    salt, hashed = hash_password("@123456")
+    user_id = create_user(
+        email="admin@gmail.com",
+        password_hash=f"{salt}${hashed}",
+        credits=0  # ajustaremos abaixo
+    )
+    # Dá "acesso completo" prático: um volume alto de créditos
+    with db_cursor() as cur:
+        cur.execute("UPDATE users SET credits_remaining = ? WHERE id = ?", (999999, user_id))
+    print("[BOOT] Usuário admin criado (admin@gmail.com).")
+
+try:
+    _seed_admin_if_missing()
+except Exception as e:
+    print(f"[BOOT][WARN] Seed admin falhou: {e}")
+
+# ==========================================================
+# Helpers de gating (login só após consumir 3 créditos)
+# ==========================================================
+def _session_ensure_and_get_id() -> str:
+    session_id = _get_session_id()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return session_id
+
+def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
+    from db.models import db_cursor
+    with db_cursor() as cur:
+        # Créditos do usuário logado
+        if user_id:
+            cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            if row and (row["credits_remaining"] or 0) > 0:
+                return True
+        # Créditos da sessão
+        if session_id:
+            cur.execute("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?", (session_id,))
+            row = cur.fetchone()
+            if row and (row["credits_temp_remaining"] or 0) > 0:
+                return True
+    return False
+
+# ==========================================================
 # Rotas Web (home/landing)
 # ==========================================================
 @app.get("/")
 def home():
-    credits_left = 3  # placeholder visual na landing
-    resp = make_response(render_template("index.html", credits_left=credits_left))
-    # garante cookie de sessão se não existir
+    # Nunca abre modal de login automaticamente.
+    # Garante cookie/sessão com 3 créditos (se nova).
+    credits_left_placeholder = 3  # só visual; o real vem do /credits_status via JS
+    resp = make_response(render_template("index.html", credits_left=credits_left_placeholder))
     if not _get_session_id():
         sid = str(uuid.uuid4())
         get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
@@ -165,11 +223,29 @@ def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
 # ==========================================================
-# Status de créditos (sessão vs usuário)
+# Gate de login (frontend decide abrir modal apenas quando preciso)
+# ==========================================================
+@app.get("/gate/login")
+@require_auth_maybe
+def gate_login(user_id: Optional[int]):
+    """
+    Regras:
+      - Se usuário logado tiver créditos > 0 => não obrigar login.
+      - Se não logado e sessão tiver créditos > 0 => não obrigar login.
+      - Caso contrário => obrigar login (para comprar créditos / histórico).
+    """
+    session_id = _get_session_id()
+    if _has_any_credit(user_id, session_id):
+        return jsonify({"ok": True, "require_login": False})
+    return jsonify({"ok": True, "require_login": True, "reason": "Sem créditos; faça login para comprar."})
+
+# ==========================================================
+# Status de créditos
 # ==========================================================
 @app.get("/credits_status")
-def credits_status():
-    from db.models import db_cursor  # import local para leitura
+@require_auth_maybe
+def credits_status(user_id: Optional[int]):
+    from db.models import db_cursor  # import local
     session_id = _get_session_id()
     user_credits = None
     session_credits = None
@@ -181,15 +257,11 @@ def credits_status():
             if r:
                 session_credits = r["credits_temp_remaining"]
 
-        # se houver Bearer, tenta usuário
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            uid = _parse_token(auth.replace("Bearer ", "", 1).strip())
-            if uid:
-                cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (uid,))
-                u = cur.fetchone()
-                if u:
-                    user_credits = u["credits_remaining"]
+        if user_id:
+            cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (user_id,))
+            u = cur.fetchone()
+            if u:
+                user_credits = u["credits_remaining"]
 
     return jsonify({"ok": True, "data": {"session": session_credits, "user": user_credits}})
 
@@ -360,7 +432,7 @@ def analyze_text(user_id: Optional[int]):
     return jsonify({"ok": True, "analysis": result})
 
 # ==========================================================
-# Pagamentos (Mock + PagSeguro stub)
+# Pagamentos (Mock)
 # ==========================================================
 @app.post("/purchase")
 @require_auth_maybe
@@ -374,11 +446,6 @@ def purchase(user_id: Optional[int]):
     provider = get_payment_provider()
     checkout = provider.start_checkout(user_id=user_id, package=package)
     return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
-
-@app.post("/webhook/pagseguro")
-def webhook_pagseguro():
-    # Ainda stubado no provider/pagseguro.py
-    return jsonify({"ok": False, "error": "Webhook PagSeguro não implementado nesta branch."}), 501
 
 # ==========================================================
 # Servir arquivos temporários (debug/local)
