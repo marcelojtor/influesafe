@@ -1,32 +1,53 @@
 from __future__ import annotations
+
 import os
-import uuid
+import io
+import hmac
 import json
+import uuid
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime
+from functools import wraps
+from typing import Optional, Tuple
+
 from flask import (
-    Flask, render_template, request, jsonify, make_response, send_from_directory
+    Flask,
+    render_template,
+    request,
+    jsonify,
+    send_from_directory,
+    make_response,
 )
 from werkzeug.utils import secure_filename
 
-# --- Config & Extensions ---
-from db import db, init_db
-from db.models import User, SessionTemp, Analysis, Purchase, with_transaction
-from utils.security import (
-    hash_password, verify_password, make_jwt_for_user, require_auth_maybe
+# ------ DB (estrutura atual: sqlite, sem SQLAlchemy) ------
+from db import init_db
+from db.models import (
+    # sessões / usuários / análises / compras
+    get_or_create_session,
+    consume_session_credit_atomic,
+    consume_user_credit_atomic,
+    record_analysis,
+    get_user_by_email,
+    create_user,
+    increment_user_credits,
+    create_purchase,
 )
-from utils.rate_limit import rate_limit
-from services.credits import (
-    get_or_create_session, get_credits_status, consume_credit_atomic, migrate_session_to_user
-)
-from services.openai_client import analyze_photo_with_ai, analyze_text_with_ai
-from payments import get_payment_provider
 
-# App
+# ------ Utils fornecidos ------
+from utils.security import hash_ip, hash_ua, hash_password, verify_password
+from utils.rate_limit import SimpleRateLimiter
+
+# ------ Serviços ------
+from services.openai_client import OpenAIClient
+from payments import get_provider as get_payment_provider
+
+
+# ==========================================================
+# Config
+# ==========================================================
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-influe")
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "sqlite:///influe.db")
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # Políticas / Operação
 FREE_CREDITS = int(os.environ.get("FREE_CREDITS", "3"))
@@ -41,22 +62,36 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_DIR = os.path.join(BASE_DIR, "storage", "temp")
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
-# Init DB
-init_db(app)
+# Inicializa DB (idempotente)
+try:
+    init_db()
+    print("[BOOT] DB inicializado.")
+except Exception as e:
+    print(f"[BOOT][WARN] init_db falhou: {e}")
+
+# IA client (stub seguro se não houver OPENAI_API_KEY)
+ai_client = OpenAIClient()
+
+# Rate limiter simples
+rate_limiter = SimpleRateLimiter(
+    window_s=60,
+    max_requests=RATE_LIMIT_PER_MINUTE,
+    min_interval_s=RATE_LIMIT_MIN_INTERVAL_MS / 1000.0,
+)
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def _ip_hash():
+# ==========================================================
+# Helpers de sessão e auth (MVP)
+# ==========================================================
+def _ip_hash() -> str:
     ip = request.headers.get("X-Forwarded-For", request.remote_addr) or ""
-    return hashlib.sha256(ip.encode()).hexdigest()
+    return hash_ip(ip)
 
-def _ua_hash():
-    ua = request.headers.get("User-Agent", "") + "|" + request.headers.get("Accept", "")
-    return hashlib.sha256(ua.encode()).hexdigest()
+def _ua_hash() -> str:
+    ua = (request.headers.get("User-Agent", "") or "") + "|" + (request.headers.get("Accept", "") or "")
+    return hash_ua(ua)
 
-def _session_id_from_cookie() -> str | None:
+def _get_session_id() -> Optional[str]:
     return request.cookies.get("influe_session")
 
 def _ensure_session_cookie(resp, session_id: str):
@@ -70,41 +105,106 @@ def _ensure_session_cookie(resp, session_id: str):
     )
     return resp
 
+# --- Token HMAC simples (MVP) ---
+def _make_token(user_id: int) -> str:
+    secret = app.config["SECRET_KEY"].encode()
+    msg = str(user_id).encode()
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return f"{user_id}.{sig}"
 
-# -----------------------------
+def _parse_token(token: str) -> Optional[int]:
+    try:
+        user_str, sig = token.split(".", 1)
+        secret = app.config["SECRET_KEY"].encode()
+        exp = hmac.new(secret, user_str.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(exp, sig):
+            return int(user_str)
+    except Exception:
+        return None
+    return None
+
+def require_auth_maybe(fn):
+    """Decorator que injeta user_id (ou None) no handler."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        user_id = None
+        if auth.startswith("Bearer "):
+            maybe = auth.replace("Bearer ", "", 1).strip()
+            user_id = _parse_token(maybe)
+        return fn(user_id, *args, **kwargs)
+    return wrapper
+
+def rate_limit(fn):
+    """Decorator de rate-limit por IP."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+        if not rate_limiter.allow(key):
+            return jsonify({"ok": False, "error": "Muitas requisições. Tente novamente em instantes."}), 429
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+# ==========================================================
 # Rotas Web (home/landing)
-# -----------------------------
-@app.route("/")
+# ==========================================================
+@app.get("/")
 def home():
-    # Mantém sua homepage existente (templates/index.html)
-    credits_left = 3
-    return render_template("index.html", credits_left=credits_left)
+    credits_left = 3  # placeholder visual na landing
+    resp = make_response(render_template("index.html", credits_left=credits_left))
+    # garante cookie de sessão se não existir
+    if not _get_session_id():
+        sid = str(uuid.uuid4())
+        get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)  # cria com créditos grátis
+        _ensure_session_cookie(resp, sid)
+    return resp
 
-@app.route("/privacy")
+@app.get("/privacy")
 def privacy():
     return jsonify({
         "ok": True,
-        "policy": "Dados minimizados, imagens temporárias por até {} dias, créditos por sessão e por usuário. Consulte README para detalhes LGPD.".format(TEMP_RETENTION_DAYS)
+        "policy": f"Dados minimizados; imagens temporárias por até {TEMP_RETENTION_DAYS} dias; créditos por sessão/usuário."
     })
 
-@app.route("/health")
+@app.get("/health")
 def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
 
-# -----------------------------
+# ==========================================================
 # Status de créditos (sessão vs usuário)
-# -----------------------------
-@app.route("/credits_status", methods=["GET"])
+# ==========================================================
+@app.get("/credits_status")
 def credits_status():
-    session_id = _session_id_from_cookie()
-    status = get_credits_status(session_id=session_id)
-    return jsonify({"ok": True, "data": status})
+    from db.models import db_cursor  # import local para leitura
+    session_id = _get_session_id()
+    user_credits = None
+    session_credits = None
+
+    with db_cursor() as cur:
+        if session_id:
+            cur.execute("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?", (session_id,))
+            r = cur.fetchone()
+            if r:
+                session_credits = r["credits_temp_remaining"]
+
+        # se houver Bearer, tenta usuário
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            uid = _parse_token(auth.replace("Bearer ", "", 1).strip())
+            if uid:
+                cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (uid,))
+                u = cur.fetchone()
+                if u:
+                    user_credits = u["credits_remaining"]
+
+    return jsonify({"ok": True, "data": {"session": session_credits, "user": user_credits}})
 
 
-# -----------------------------
+# ==========================================================
 # Auth simples (email + senha)
-# -----------------------------
+# ==========================================================
 @app.post("/auth/register")
 def auth_register():
     data = request.get_json(silent=True) or {}
@@ -113,20 +213,16 @@ def auth_register():
     if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
 
-    if User.query.filter_by(email=email).first():
+    if get_user_by_email(email):
         return jsonify({"ok": False, "error": "Email já cadastrado."}), 409
 
-    user = User(email=email, password_hash=hash_password(password))
-    db.session.add(user)
-    db.session.commit()
+    # utils.hash_password -> (salt, hash_hex). Guardamos como "salt$hash"
+    salt, hashed = hash_password(password)
+    user_id = create_user(email=email, password_hash=f"{salt}${hashed}", credits=0)
 
-    # migrar créditos de sessão (se houver)
-    session_id = _session_id_from_cookie()
-    if session_id:
-        migrate_session_to_user(session_id=session_id, user_id=user.id)
-
-    token = make_jwt_for_user(user.id, app.config["SECRET_KEY"])
-    return jsonify({"ok": True, "token": token, "user_id": user.id})
+    # migra sessão anon para usuário (só transfere saldo temp futuramente, se desejar)
+    token = _make_token(user_id)
+    return jsonify({"ok": True, "token": token, "user_id": user_id})
 
 @app.post("/auth/login")
 def auth_login():
@@ -136,65 +232,78 @@ def auth_login():
     if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
 
-    user = User.query.filter_by(email=email).first()
-    if not user or not verify_password(password, user.password_hash):
+    user = get_user_by_email(email)
+    if not user:
         return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
 
-    token = make_jwt_for_user(user.id, app.config["SECRET_KEY"])
+    # password_hash armazenado como "salt$hash"
+    from db.models import db_cursor
+    with db_cursor() as cur:
+        cur.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+        try:
+            salt, stored_hex = row["password_hash"].split("$", 1)
+        except Exception:
+            return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+
+    if not verify_password(password, salt, stored_hex):
+        return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+
+    token = _make_token(user.id)
     return jsonify({"ok": True, "token": token, "user_id": user.id})
 
 @app.get("/user/profile")
 @require_auth_maybe
-def user_profile(user_id: int | None):
-    # Retorna histórico de análises pagas (se logado)
+def user_profile(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": True, "data": {"logged_in": False, "history": []}})
 
-    analyses = (
-        Analysis.query.filter(Analysis.user_id == user_id)
-        .order_by(Analysis.created_at.desc()).limit(50).all()
-    )
-    history = [
-        {
-            "id": a.id,
-            "type": a.type,
-            "score_risk": a.score_risk,
-            "tags": json.loads(a.tags_json or "[]"),
-            "created_at": a.created_at.isoformat()
-        }
-        for a in analyses
-    ]
-    user = User.query.get(user_id)
-    return jsonify({
-        "ok": True,
-        "data": {
-            "logged_in": True,
-            "credits_remaining": user.credits_remaining,
-            "history": history
-        }
-    })
+    from db.models import db_cursor
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+            (user_id,),
+        )
+        rows = cur.fetchall()
+        history = []
+        for r in rows:
+            try:
+                tags = json.loads(r["tags"]) if r["tags"] else []
+            except Exception:
+                tags = []
+            history.append({
+                "id": r["id"],
+                "type": r["type"],
+                "score_risk": r["score_risk"],
+                "tags": tags,
+                "created_at": r["created_at"],
+            })
+
+        cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (user_id,))
+        uc = cur.fetchone()
+        credits_remaining = uc["credits_remaining"] if uc else 0
+
+    return jsonify({"ok": True, "data": {"logged_in": True, "credits_remaining": credits_remaining, "history": history}})
 
 
-# -----------------------------
+# ==========================================================
 # Analyze Photo / Text
-# -----------------------------
-def _ensure_session():
-    session_id = _session_id_from_cookie()
+# ==========================================================
+def _ensure_session() -> str:
+    session_id = _get_session_id()
     if not session_id:
         session_id = str(uuid.uuid4())
-        ip_h = _ip_hash()
-        ua_h = _ua_hash()
-        get_or_create_session(session_id, ip_h, ua_h, FREE_CREDITS, FREE_CREDITS_COOLDOWN_HOURS)
+        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
     return session_id
 
 @app.post("/analyze_photo")
-@rate_limit(RATE_LIMIT_PER_MINUTE, RATE_LIMIT_MIN_INTERVAL_MS)
+@rate_limit
 @require_auth_maybe
-def analyze_photo(user_id: int | None):
-    # Garante sessão e bloqueios
+def analyze_photo(user_id: Optional[int]):
     session_id = _ensure_session()
 
-    # Validação & armazenamento temporário
     file = request.files.get("file") or request.files.get("photo")
     if not file or not file.filename:
         return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
@@ -203,137 +312,105 @@ def analyze_photo(user_id: int | None):
     if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
         return jsonify({"ok": False, "error": "Formato inválido. Use JPG/PNG."}), 400
 
+    # tamanho
     file.seek(0, os.SEEK_END)
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_UPLOAD_MB:
         return jsonify({"ok": False, "error": f"Arquivo excede {MAX_UPLOAD_MB}MB."}), 400
 
+    # salvar temporário
     session_dir = os.path.join(STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
     save_path = os.path.join(session_dir, filename)
     file.save(save_path)
 
-    # Consumo de crédito atômico + análise
-    try:
-        with with_transaction():
-            ok = consume_credit_atomic(user_id=user_id, session_id=session_id)
-            if not ok:
-                return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
+    # consumir crédito
+    ok = False
+    if user_id:
+        ok = consume_user_credit_atomic(user_id)
+    if not ok:
+        ok = consume_session_credit_atomic(session_id)
+    if not ok:
+        return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
 
-            # Chama a IA
-            result = analyze_photo_with_ai(save_path)
+    # chamar IA
+    result = ai_client.analyze_image(save_path)
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
 
-            # Pós-processamento e persistência básica
-            analysis = Analysis(
-                session_id=session_id,
-                user_id=user_id,
-                type="photo",
-                meta_json=json.dumps({"filename": filename}),
-                score_risk=result.get("score_risk", 0),
-                tags_json=json.dumps(result.get("tags", [])),
-                created_at=datetime.utcnow(),
-            )
-            db.session.add(analysis)
-        # fim da transação
+    # persistir análise (MVP)
+    meta = json.dumps({"filename": filename})
+    tags = json.dumps(result.get("tags", []))
+    score = int(result.get("score_risk", 0))
+    record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
 
-        return jsonify({"ok": True, "analysis": result})
-    except Exception as e:
-        app.logger.exception("Erro em analyze_photo")
-        return jsonify({"ok": False, "error": "Falha ao processar a imagem."}), 500
+    return jsonify({"ok": True, "analysis": result})
 
 @app.post("/analyze_text")
-@rate_limit(RATE_LIMIT_PER_MINUTE, RATE_LIMIT_MIN_INTERVAL_MS)
+@rate_limit
 @require_auth_maybe
-def analyze_text(user_id: int | None):
+def analyze_text(user_id: Optional[int]):
     session_id = _ensure_session()
+
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     if not text:
         return jsonify({"ok": False, "error": "Texto vazio."}), 400
 
-    try:
-        with with_transaction():
-            ok = consume_credit_atomic(user_id=user_id, session_id=session_id)
-            if not ok:
-                return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
+    ok = False
+    if user_id:
+        ok = consume_user_credit_atomic(user_id)
+    if not ok:
+        ok = consume_session_credit_atomic(session_id)
+    if not ok:
+        return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
 
-            result = analyze_text_with_ai(text)
+    result = ai_client.analyze_text(text)
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
 
-            analysis = Analysis(
-                session_id=session_id,
-                user_id=user_id,
-                type="text",
-                meta_json=json.dumps({"chars": len(text)}),
-                score_risk=result.get("score_risk", 0),
-                tags_json=json.dumps(result.get("tags", [])),
-                created_at=datetime.utcnow(),
-            )
-            db.session.add(analysis)
+    meta = json.dumps({"chars": len(text)})
+    tags = json.dumps(result.get("tags", []))
+    score = int(result.get("score_risk", 0))
+    record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
 
-        return jsonify({"ok": True, "analysis": result})
-    except Exception:
-        app.logger.exception("Erro em analyze_text")
-        return jsonify({"ok": False, "error": "Falha ao processar o texto."}), 500
+    return jsonify({"ok": True, "analysis": result})
 
 
-# -----------------------------
-# Pagamentos (Mock + PagSeguro)
-# -----------------------------
+# ==========================================================
+# Pagamentos (Mock + PagSeguro stub)
+# ==========================================================
 @app.post("/purchase")
 @require_auth_maybe
-def purchase(user_id: int | None):
+def purchase(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": False, "error": "É necessário login para comprar créditos."}), 401
+
     data = request.get_json(silent=True) or {}
     package = int(data.get("package") or 10)  # 10, 20, 50
+
     provider = get_payment_provider()
-    checkout = provider.create_checkout(user_id=user_id, package=package)
-    return jsonify({"ok": True, "checkout": checkout})
+    # Nosso mock usa start_checkout() e já credita; o stub do PagSeguro retornará erro controlado
+    checkout = provider.start_checkout(user_id=user_id, package=package)
+    return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
 
 @app.post("/webhook/pagseguro")
 def webhook_pagseguro():
-    provider = get_payment_provider()
-    try:
-        payload = request.get_json(force=True)
-    except Exception:
-        return jsonify({"ok": False, "error": "Payload inválido."}), 400
-
-    if not provider.verify_webhook(payload, request.headers):
-        return jsonify({"ok": False, "error": "Assinatura inválida."}), 401
-
-    credits, user_id, provider_ref = provider.parse_webhook(payload)
-    if not credits or not user_id:
-        return jsonify({"ok": False, "error": "Webhook incompleto."}), 400
-
-    with with_transaction():
-        user = User.query.get(user_id)
-        if not user:
-            return jsonify({"ok": False, "error": "Usuário não encontrado."}), 404
-        user.credits_remaining = (user.credits_remaining or 0) + credits
-        p = Purchase(
-            user_id=user_id,
-            package=credits,
-            amount=0,  # mock
-            status="paid",
-            provider_ref=provider_ref,
-            created_at=datetime.utcnow(),
-        )
-        db.session.add(p)
-
-    return jsonify({"ok": True})
+    # Ainda stubado no provider/pagseguro.py
+    return jsonify({"ok": False, "error": "Webhook PagSeguro não implementado nesta branch."}), 501
 
 
-# -----------------------------
-# Rota para servir arquivos temporários (debug/local)
-# -----------------------------
-@app.route("/storage/temp/<session_id>/<path:fname>")
+# ==========================================================
+# Servir arquivos temporários (debug/local)
+# ==========================================================
+@app.get("/storage/temp/<session_id>/<path:fname>")
 def serve_temp(session_id, fname):
     return send_from_directory(os.path.join(STORAGE_DIR, session_id), fname)
 
 
-# -----------------------------
-# Boot
-# -----------------------------
+# ==========================================================
+# Boot local
+# ==========================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
