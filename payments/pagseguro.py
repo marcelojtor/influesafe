@@ -1,12 +1,10 @@
+# payments/pagseguro.py
 from typing import Dict, Any
 
 class PagSeguroProvider:
     """
-    Stub seguro do provider PagSeguro.
-    Ao integrar de fato:
-      - iniciar checkout (sessão, ref de pagamento)
-      - validar assinatura do webhook
-      - atualizar compra e créditos em transação
+    Stub do PagSeguro.
+    - Em produção: implementar criação de checkout, validação de assinatura e webhook.
     """
     def start_checkout(self, user_id: int, package: int) -> Dict[str, Any]:
         return {
@@ -14,7 +12,7 @@ class PagSeguroProvider:
             "error": "PagSeguroProvider.start_checkout não implementado nesta branch (stub)."
         }
 
-    # Exemplo de placeholder: validar webhook
+    # Exemplo de placeholder para futura validação:
     def validate_webhook(self, headers, body_bytes) -> Dict[str, Any]:
         return {
             "ok": False,
