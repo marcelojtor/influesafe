@@ -9,6 +9,19 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+  <style>
+    /* Elementos mínimos para modal (mantendo seu tema) */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
+    .modal{position:fixed;inset:0;display:grid;place-items:center;z-index:50;pointer-events:none}
+    .modal .panel{width:min(520px,92vw);background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:1rem 1rem 1.25rem;pointer-events:auto}
+    .modal.show,.modal-backdrop.show{display:block}
+    .row{display:flex;gap:.5rem;flex-wrap:wrap}
+    .field{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
+    .field input{width:100%;border-radius:12px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);padding:.8rem .9rem;font-family:inherit}
+    .divider{height:1px;background:var(--border);margin:1rem 0}
+    .pill{font-size:.85rem;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border);padding:.3rem .6rem;border-radius:999px}
+    .tag{display:inline-flex;gap:.35rem;align-items:center}
+  </style>
 </head>
 <body>
   <header class="topbar">
@@ -17,9 +30,30 @@
         <div class="logo">I</div>
         <span class="brandtext">INFLUE</span>
       </a>
-      <nav class="auth">
-        <a href="/login" class="link">Entrar</a>
-        <a href="/signup" class="btn btn-primary">Criar conta</a>
+
+      <!-- Barra de ações / estado do usuário -->
+      <nav class="auth row" style="align-items:center">
+        <span id="user-state" class="pill tag" title="Estado de sessão">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="#6aa8ff"/></svg>
+          <span id="user-label">Convidado</span>
+        </span>
+
+        <!-- Saldo dinâmico (sessão | usuário) -->
+        <span class="muted" style="margin-left:.25rem;">
+          Créditos:
+          <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">
+            Sessão: {{ credits_left|default(0) }} | Usuário: —
+          </strong>
+        </span>
+
+        <!-- Botões de ação -->
+        <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos (mock nesta etapa)">
+          Comprar 10 créditos
+        </button>
+
+        <!-- Área de login/logout -->
+        <button id="btn-open-auth" class="btn btn-ghost" type="button">Entrar / Criar conta</button>
+        <button id="btn-logout" class="btn btn-ghost" type="button" style="display:none;">Sair</button>
       </nav>
     </div>
   </header>
@@ -29,9 +63,71 @@
   <footer class="footer">
     <div class="container flex between center-v wrap">
       <small>© <span id="year"></span> INFLUE. Todos os direitos reservados.</small>
-      <small class="muted">Créditos disponíveis: <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">{{ credits_left|default(0) }}</strong></small>
+      <small class="muted">Política de Privacidade • <a class="link" href="/privacy">/privacy</a></small>
     </div>
   </footer>
+
+  <!-- Backdrop do modal -->
+  <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
+
+  <!-- Modal de Autenticação (registro/login) -->
+  <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
+    <div class="panel">
+      <div class="flex between center-v">
+        <h2 id="auth-title" style="margin:.25rem 0 0;">Acessar INFLUE</h2>
+        <button id="auth-close" class="btn btn-ghost" type="button" aria-label="Fechar">Fechar</button>
+      </div>
+      <p class="muted" style="margin:.25rem 0 0;">Use seu e-mail para criar conta ou entrar.</p>
+
+      <div class="field">
+        <label for="auth-email" class="muted">E-mail</label>
+        <input id="auth-email" type="email" placeholder="voce@exemplo.com" autocomplete="email" />
+      </div>
+      <div class="field">
+        <label for="auth-password" class="muted">Senha</label>
+        <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+
+      <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
+        <button id="btn-login" class="btn btn-ghost" type="button">Entrar</button>
+        <button id="btn-register" class="btn btn-primary" type="button">Criar conta</button>
+      </div>
+
+      <div class="divider"></div>
+      <small class="muted">Ao continuar, você concorda com nossos termos e a política de privacidade.</small>
+    </div>
+  </section>
+
+  <script>
+    // Controles mínimos do modal (sem dependências)
+    (function(){
+      const modal = document.getElementById('auth-modal');
+      const backdrop = document.getElementById('auth-backdrop');
+      const openBtn = document.getElementById('btn-open-auth');
+      const closeBtn = document.getElementById('auth-close');
+
+      function showModal(){
+        if (!modal || !backdrop) return;
+        modal.classList.add('show');
+        backdrop.classList.add('show');
+        modal.setAttribute('aria-hidden','false');
+        backdrop.setAttribute('aria-hidden','false');
+        setTimeout(()=>document.getElementById('auth-email')?.focus(), 50);
+      }
+      function hideModal(){
+        if (!modal || !backdrop) return;
+        modal.classList.remove('show');
+        backdrop.classList.remove('show');
+        modal.setAttribute('aria-hidden','true');
+        backdrop.setAttribute('aria-hidden','true');
+      }
+
+      openBtn?.addEventListener('click', showModal);
+      closeBtn?.addEventListener('click', hideModal);
+      backdrop?.addEventListener('click', hideModal);
+      document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') hideModal(); });
+    })();
+  </script>
 
   <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
 </body>
