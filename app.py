@@ -289,8 +289,7 @@ def auth_login():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
-    if not email o
-r not password:
+    if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
 
     user = get_user_by_email(email)
@@ -365,8 +364,7 @@ def analyze_photo(user_id: Optional[int]):
     session_id = _ensure_session()
 
     file = request.files.get("file") or request.files.get("photo")
-    if not file o
-r not file.filename:
+    if not file or not file.filename:
         return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
 
     filename = secure_filename(file.filename.lower())
@@ -442,8 +440,7 @@ def purchase(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": False, "error": "É necessário login para comprar créditos."}), 401
 
-    data = request.get_json(silent=True) o
-r {}
+    data = request.get_json(silent=True) or {}
     package = int(data.get("package") or 10)  # 10, 20, 50
 
     provider = get_payment_provider()
@@ -460,29 +457,33 @@ def serve_temp(session_id, fname):
 # ==========================================================
 # Teste temporário de conexão com o Neon
 # ==========================================================
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
-import re, asyncio
-
 @app.get("/test_db")
 def test_db():
-    db_url = os.getenv("DATABASE_URL")
+    try:
+        import os as _os, re as _re, asyncio as _asyncio
+        from sqlalchemy import text as _text
+        from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
+    except Exception as e:
+        return f"❌ Dependência faltando (SQLAlchemy/asyncpg): {e}"
+
+    db_url = _os.getenv("DATABASE_URL")
     if not db_url:
         return "❌ DATABASE_URL não encontrada no ambiente Render."
-    async_url = re.sub(r"^postgresql:", "postgresql+asyncpg:", db_url)
+
+    async_url = _re.sub(r"^postgresql:", "postgresql+asyncpg:", db_url)
 
     async def run_test():
         try:
-            engine = create_async_engine(async_url)
+            engine = _create_async_engine(async_url)
             async with engine.connect() as conn:
-                result = await conn.execute(text("select 'Render conectado ao Neon!'"))
+                result = await conn.execute(_text("select 'Render conectado ao Neon!'"))
                 rows = result.fetchall()
             await engine.dispose()
             return str(rows)
         except Exception as e:
             return f"❌ Erro de conexão: {e}"
 
-    return asyncio.run(run_test())
+    return _asyncio.run(run_test())
 
 # ==========================================================
 # Boot local
