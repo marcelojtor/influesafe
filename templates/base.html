@@ -10,11 +10,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
   <style>
-    /* Modal mínimo (mantendo o tema) */
+    /* -------- Modal (corrigido: oculto por padrão) -------- */
     .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
-    .modal{position:fixed;inset:0;display:grid;place-items:center;z-index:50;pointer-events:none}
+    .modal{position:fixed;inset:0;display:none;place-items:center;z-index:50;pointer-events:none}
+    .modal.show{display:grid}
+    .modal-backdrop.show{display:block}
     .modal .panel{width:min(520px,92vw);background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:1rem 1rem 1.25rem;pointer-events:auto}
-    .modal.show,.modal-backdrop.show{display:block}
     .row{display:flex;gap:.5rem;flex-wrap:wrap}
     .field{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
     .field input{width:100%;border-radius:12px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);padding:.8rem .9rem;font-family:inherit}
@@ -70,7 +71,7 @@
   <!-- Backdrop do modal -->
   <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
 
-  <!-- Modal de Autenticação (registro/login) — não abre mais automaticamente -->
+  <!-- Modal de Autenticação -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
       <div class="flex between center-v">
@@ -99,7 +100,7 @@
   </section>
 
   <script>
-    // Controles mínimos do modal (sem dependências; não abre automaticamente)
+    // Controles mínimos do modal (não abre automaticamente)
     (function(){
       const modal = document.getElementById('auth-modal');
       const backdrop = document.getElementById('auth-backdrop');
@@ -122,13 +123,12 @@
         backdrop.setAttribute('aria-hidden','true');
       }
 
-      // Abre somente quando o usuário clicar (ou quando o JS decidir após esgotar créditos)
       openBtn?.addEventListener('click', showModal);
       closeBtn?.addEventListener('click', hideModal);
       backdrop?.addEventListener('click', hideModal);
       document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') hideModal(); });
 
-      // Expõe helpers globais para o main.js poder abrir/fechar quando necessário
+      // Helpers globais para main.js
       window.__influe_show_auth__ = showModal;
       window.__influe_hide_auth__ = hideModal;
     })();
