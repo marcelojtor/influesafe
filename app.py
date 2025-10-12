@@ -19,7 +19,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-# ------ DB (sqlite, sem SQLAlchemy) ------
+# ------ DB (sqlite/pg via camada db) ------
 from db import init_db
 from db.models import (
     get_or_create_session,
@@ -36,7 +36,7 @@ from utils.rate_limit import SimpleRateLimiter
 
 # ------ Serviços ------
 from services.openai_client import OpenAIClient
-from payments import get_payment_provider  # garante que payments/__init__.py expose get_payment_provider
+from payments import get_payment_provider  # payments/__init__.py deve expor get_payment_provider
 
 # ==========================================================
 # Config
@@ -56,7 +56,7 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_DIR = os.path.join(BASE_DIR, "storage", "temp")
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
-# Inicializa DB
+# Inicializa DB (idempotente)
 try:
     init_db()
     print("[BOOT] DB inicializado.")
@@ -167,7 +167,6 @@ def _seed_admin_if_missing():
         password_hash=f"{salt}${hashed}",
         credits=0  # ajustaremos abaixo
     )
-    # Dá "acesso completo" prático: um volume alto de créditos
     with db_cursor() as cur:
         cur.execute(_sql("UPDATE users SET credits_remaining = ? WHERE id = ?"), (999999, user_id))
     print("[BOOT] Usuário admin criado (admin@gmail.com).")
@@ -176,6 +175,45 @@ try:
     _seed_admin_if_missing()
 except Exception as e:
     print(f"[BOOT][WARN] Seed admin falhou: {e}")
+
+# ==========================================================
+# Rota de SETUP seguro (cria schema + seed admin)
+# ==========================================================
+@app.get("/__admin/ensure_schema")
+def ensure_schema():
+    """
+    Setup idempotente do schema.
+    Protegido por token de ambiente: SETUP_TOKEN (query param: ?token=...).
+    """
+    setup_token = os.environ.get("SETUP_TOKEN", "")
+    token = request.args.get("token", "")
+    if not setup_token or token != setup_token:
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    from db.models import db_cursor
+    result = {"created_or_ok": [], "errors": {}}
+    try:
+        # Cria tabelas conforme versão do código
+        init_db()
+        # Verifica existência com selects simples
+        for t in ("users", "sessions", "analyses", "purchases"):
+            try:
+                with db_cursor() as cur:
+                    cur.execute(_sql(f"SELECT 1 FROM {t} LIMIT 1"))
+                result["created_or_ok"].append(t)
+            except Exception as te:
+                result["errors"][t] = str(te)
+
+        # Seed admin
+        try:
+            _seed_admin_if_missing()
+            result["admin_seed"] = "ok"
+        except Exception as se:
+            result["admin_seed"] = f"error: {se}"
+
+        return jsonify({"ok": True, "status": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 # ==========================================================
 # Helpers de gating (login só após consumir 3 créditos)
@@ -190,13 +228,11 @@ def _session_ensure_and_get_id() -> str:
 def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
     from db.models import db_cursor
     with db_cursor() as cur:
-        # Créditos do usuário logado
         if user_id:
             cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
             row = cur.fetchone()
             if row and (row["credits_remaining"] or 0) > 0:
                 return True
-        # Créditos da sessão
         if session_id:
             cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
             row = cur.fetchone()
@@ -209,9 +245,7 @@ def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
 # ==========================================================
 @app.get("/")
 def home():
-    # Nunca abre modal de login automaticamente.
-    # Garante cookie/sessão com 3 créditos (se nova).
-    credits_left_placeholder = 3  # só visual; o real vem do /credits_status via JS
+    credits_left_placeholder = 3  # real vem do /credits_status via JS
     resp = make_response(render_template("index.html", credits_left=credits_left_placeholder))
     if not _get_session_id():
         sid = str(uuid.uuid4())
@@ -231,17 +265,11 @@ def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
 # ==========================================================
-# Gate de login (frontend decide abrir modal apenas quando preciso)
+# Gate de login
 # ==========================================================
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
-    """
-    Regras:
-      - Se usuário logado tiver créditos > 0 => não obrigar login.
-      - Se não logado e sessão tiver créditos > 0 => não obrigar login.
-      - Caso contrário => obrigar login (para comprar créditos / histórico).
-    """
     session_id = _get_session_id()
     if _has_any_credit(user_id, session_id):
         return jsonify({"ok": True, "require_login": False})
@@ -253,7 +281,7 @@ def gate_login(user_id: Optional[int]):
 @app.get("/credits_status")
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
-    from db.models import db_cursor  # import local
+    from db.models import db_cursor
     session_id = _get_session_id()
     user_credits = None
     session_credits = None
