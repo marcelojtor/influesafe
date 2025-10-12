@@ -182,13 +182,22 @@
     }
   }
 
-  elBtnLogin?.addEventListener("click", () => loginOrRegister(false));
-  elBtnRegister?.addEventListener("click", () => loginOrRegister(true));
-  elBtnLogout?.addEventListener("click", () => {
-    clearToken();
-    updateAuthUI();
-    updateCreditsLabel();
-  });
+ elBtnLogin?.addEventListener("click", (e) => {
+  e.preventDefault();
+  loginOrRegister(false);
+});
+
+elBtnRegister?.addEventListener("click", (e) => {
+  e.preventDefault();
+  loginOrRegister(true);
+});
+
+elBtnLogout?.addEventListener("click", (e) => {
+  e.preventDefault();
+  clearToken();
+  updateAuthUI();
+  updateCreditsLabel();
+});
 
   // -----------------------------
   // Compra (mock) — abre login se necessário
