@@ -323,7 +323,7 @@ def user_profile(user_id: Optional[int]):
     from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(
-            "SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+            "SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER at DESC LIMIT 50".replace(" at ", " BY "),
             (user_id,),
         )
         rows = cur.fetchall()
@@ -453,46 +453,6 @@ def purchase(user_id: Optional[int]):
 @app.get("/storage/temp/<session_id>/<path:fname>")
 def serve_temp(session_id, fname):
     return send_from_directory(os.path.join(STORAGE_DIR, session_id), fname)
-
-# ==========================================================
-# Teste temporário de conexão com o Neon (compatível com asyncpg)
-# ==========================================================
-@app.get("/test_db")
-def test_db():
-    try:
-        import os as _os, re as _re, asyncio as _asyncio
-        from urllib.parse import urlparse as _urlparse, urlunparse as _urlunparse, parse_qsl as _parse_qsl, urlencode as _urlencode
-        from sqlalchemy import text as _text
-        from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
-    except Exception as e:
-        return f"❌ Dependência faltando (SQLAlchemy/asyncpg): {e}"
-
-    db_url = _os.getenv("DATABASE_URL")
-    if not db_url:
-        return "❌ DATABASE_URL não encontrada no ambiente Render."
-
-    # 1) trocar driver para asyncpg
-    async_url = _re.sub(r"^postgresql:", "postgresql+asyncpg:", db_url)
-
-    # 2) remover query params que o asyncpg não entende (sslmode, channel_binding)
-    parsed = list(_urlparse(async_url))
-    qs = [(k, v) for k, v in _parse_qsl(parsed[4]) if k not in ("sslmode", "channel_binding")]
-    parsed[4] = _urlencode(qs)  # query limpa
-    async_url_clean = _urlunparse(parsed)
-
-    async def run_test():
-        try:
-            # 3) forçar TLS para o Neon no asyncpg
-            engine = _create_async_engine(async_url_clean, connect_args={"ssl": True})
-            async with engine.connect() as conn:
-                result = await conn.execute(_text("select 'Render conectado ao Neon!'"))
-                rows = result.fetchall()
-            await engine.dispose()
-            return str(rows)
-        except Exception as e:
-            return f"❌ Erro de conexão: {e}"
-
-    return _asyncio.run(run_test())
 
 # ==========================================================
 # Boot local
