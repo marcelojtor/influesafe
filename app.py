@@ -74,6 +74,14 @@ rate_limiter = SimpleRateLimiter(
 )
 
 # ==========================================================
+# Compatibilidade de SQL placeholder (SQLite x Postgres)
+# ==========================================================
+_IS_PG = os.environ.get("DATABASE_URL", "").startswith(("postgresql://", "postgres://"))
+def _sql(q: str) -> str:
+    """Converte placeholders '?' → '%s' somente quando usando Postgres."""
+    return q.replace("?", "%s") if _IS_PG else q
+
+# ==========================================================
 # Helpers de sessão e auth
 # ==========================================================
 def _ip_hash() -> str:
@@ -161,7 +169,7 @@ def _seed_admin_if_missing():
     )
     # Dá "acesso completo" prático: um volume alto de créditos
     with db_cursor() as cur:
-        cur.execute("UPDATE users SET credits_remaining = ? WHERE id = ?", (999999, user_id))
+        cur.execute(_sql("UPDATE users SET credits_remaining = ? WHERE id = ?"), (999999, user_id))
     print("[BOOT] Usuário admin criado (admin@gmail.com).")
 
 try:
@@ -184,13 +192,13 @@ def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
     with db_cursor() as cur:
         # Créditos do usuário logado
         if user_id:
-            cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (user_id,))
+            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
             row = cur.fetchone()
             if row and (row["credits_remaining"] or 0) > 0:
                 return True
         # Créditos da sessão
         if session_id:
-            cur.execute("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?", (session_id,))
+            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
             row = cur.fetchone()
             if row and (row["credits_temp_remaining"] or 0) > 0:
                 return True
@@ -252,13 +260,13 @@ def credits_status(user_id: Optional[int]):
 
     with db_cursor() as cur:
         if session_id:
-            cur.execute("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?", (session_id,))
+            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
             r = cur.fetchone()
             if r:
                 session_credits = r["credits_temp_remaining"]
 
         if user_id:
-            cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (user_id,))
+            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
             u = cur.fetchone()
             if u:
                 user_credits = u["credits_remaining"]
@@ -299,7 +307,7 @@ def auth_login():
     # password_hash armazenado como "salt$hash"
     from db.models import db_cursor
     with db_cursor() as cur:
-        cur.execute("SELECT password_hash FROM users WHERE id = ?", (user.id,))
+        cur.execute(_sql("SELECT password_hash FROM users WHERE id = ?"), (user.id,))
         row = cur.fetchone()
         if not row:
             return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
@@ -323,7 +331,7 @@ def user_profile(user_id: Optional[int]):
     from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(
-            "SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER at DESC LIMIT 50".replace(" at ", " BY "),
+            _sql("SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
             (user_id,),
         )
         rows = cur.fetchall()
@@ -341,7 +349,7 @@ def user_profile(user_id: Optional[int]):
                 "created_at": r["created_at"],
             })
 
-        cur.execute("SELECT credits_remaining FROM users WHERE id = ?", (user_id,))
+        cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
         uc = cur.fetchone()
         credits_remaining = uc["credits_remaining"] if uc else 0
 
