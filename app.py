@@ -288,7 +288,7 @@ def auth_register():
 def auth_login():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or ""
+    password = (data.get("password") or "")
     if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
 
@@ -422,7 +422,7 @@ def analyze_text(user_id: Optional[int]):
 
     result = ai_client.analyze_text(text)
     if not result.get("ok"):
-        return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
+        return jsonify({"ok": False, "error": "Falha na análise de IA."}), 502
 
     meta = json.dumps({"chars": len(text)})
     tags = json.dumps(result.get("tags", []))
@@ -455,12 +455,13 @@ def serve_temp(session_id, fname):
     return send_from_directory(os.path.join(STORAGE_DIR, session_id), fname)
 
 # ==========================================================
-# Teste temporário de conexão com o Neon
+# Teste temporário de conexão com o Neon (compatível com asyncpg)
 # ==========================================================
 @app.get("/test_db")
 def test_db():
     try:
         import os as _os, re as _re, asyncio as _asyncio
+        from urllib.parse import urlparse as _urlparse, urlunparse as _urlunparse, parse_qsl as _parse_qsl, urlencode as _urlencode
         from sqlalchemy import text as _text
         from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
     except Exception as e:
@@ -470,11 +471,19 @@ def test_db():
     if not db_url:
         return "❌ DATABASE_URL não encontrada no ambiente Render."
 
+    # 1) trocar driver para asyncpg
     async_url = _re.sub(r"^postgresql:", "postgresql+asyncpg:", db_url)
+
+    # 2) remover query params que o asyncpg não entende (sslmode, channel_binding)
+    parsed = list(_urlparse(async_url))
+    qs = [(k, v) for k, v in _parse_qsl(parsed[4]) if k not in ("sslmode", "channel_binding")]
+    parsed[4] = _urlencode(qs)  # query limpa
+    async_url_clean = _urlunparse(parsed)
 
     async def run_test():
         try:
-            engine = _create_async_engine(async_url)
+            # 3) forçar TLS para o Neon no asyncpg
+            engine = _create_async_engine(async_url_clean, connect_args={"ssl": True})
             async with engine.connect() as conn:
                 result = await conn.execute(_text("select 'Render conectado ao Neon!'"))
                 rows = result.fetchall()
