@@ -5,7 +5,7 @@ Jinja2==3.1.4
 itsdangerous==2.1.2
 
 # ---- Banco de Dados (SQLite + Postgres Neon) ----
-psycopg[binary]==3.1.19
+psycopg[binary]==3.2.10
 python-dotenv==1.0.1
 
 # ---- Utilidades ----
