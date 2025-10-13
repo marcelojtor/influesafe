@@ -19,7 +19,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-# ------ DB (sqlite ou Postgres via psycopg) ------
+# ------ DB init / schema helpers ------
 from db.models import (
     init_db,
     get_or_create_session,
@@ -36,7 +36,7 @@ from utils.rate_limit import SimpleRateLimiter
 
 # ------ Serviços ------
 from services.openai_client import OpenAIClient
-from payments import get_payment_provider  # garante payments/__init__.py -> get_payment_provider
+from payments import get_payment_provider  # garante public get_payment_provider
 
 # ==========================================================
 # Config
@@ -56,10 +56,7 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_DIR = os.path.join(BASE_DIR, "storage", "temp")
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
-# Detecta se é Postgres (para logs apenas)
-_IS_PG = os.environ.get("DATABASE_URL", "").startswith(("postgresql://", "postgres://"))
-
-# Inicializa DB (tabelas)
+# Inicializa DB / cria tabelas
 try:
     init_db()
     print("[BOOT] DB inicializado.")
@@ -77,49 +74,14 @@ rate_limiter = SimpleRateLimiter(
 )
 
 # ==========================================================
-# Token HMAC simples (MVP)
+# Compat SQLite x Postgres (para placeholders em logs locais)
 # ==========================================================
-def _make_token(user_id: int) -> str:
-    secret = app.config["SECRET_KEY"].encode()
-    msg = str(user_id).encode()
-    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
-    return f"{user_id}.{sig}"
-
-def _parse_token(token: str) -> Optional[int]:
-    try:
-        user_str, sig = token.split(".", 1)
-        secret = app.config["SECRET_KEY"].encode()
-        exp = hmac.new(secret, user_str.encode(), hashlib.sha256).hexdigest()
-        if hmac.compare_digest(exp, sig):
-            return int(user_str)
-    except Exception:
-        return None
-    return None
-
-def require_auth_maybe(fn):
-    """Decorator que injeta user_id (ou None) no handler."""
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        auth = request.headers.get("Authorization", "")
-        user_id = None
-        if auth.startswith("Bearer "):
-            maybe = auth.replace("Bearer ", "", 1).strip()
-            user_id = _parse_token(maybe)
-        return fn(user_id, *args, **kwargs)
-    return wrapper
-
-def rate_limit(fn):
-    """Decorator de rate-limit por IP."""
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        key = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
-        if not rate_limiter.allow(key):
-            return jsonify({"ok": False, "error": "Muitas requisições. Tente novamente em instantes."}), 429
-        return fn(*args, **kwargs)
-    return wrapper
+_IS_PG = os.environ.get("DATABASE_URL", "").startswith(("postgresql://", "postgres://"))
+def _sql(q: str) -> str:
+    return q.replace("?", "%s") if _IS_PG else q
 
 # ==========================================================
-# Helpers de sessão
+# Helpers de sessão e auth
 # ==========================================================
 def _ip_hash() -> str:
     ip = request.headers.get("X-Forwarded-For", request.remote_addr) or ""
@@ -143,37 +105,118 @@ def _ensure_session_cookie(resp, session_id: str):
     )
     return resp
 
-def _ensure_session() -> str:
+# --- Token HMAC simples (MVP) ---
+def _make_token(user_id: int) -> str:
+    secret = app.config["SECRET_KEY"].encode()
+    msg = str(user_id).encode()
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return f"{user_id}.{sig}"
+
+def _parse_token(token: str) -> Optional[int]:
+    try:
+        user_str, sig = token.split(".", 1)
+        secret = app.config["SECRET_KEY"].encode()
+        exp = hmac.new(secret, user_str.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(exp, sig):
+            return int(user_str)
+    except Exception:
+        return None
+    return None
+
+def require_auth_maybe(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        user_id = None
+        if auth.startswith("Bearer "):
+            maybe = auth.replace("Bearer ", "", 1).strip()
+            user_id = _parse_token(maybe)
+        return fn(user_id, *args, **kwargs)
+    return wrapper
+
+def rate_limit(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+        if not rate_limiter.allow(key):
+            return jsonify({"ok": False, "error": "Muitas requisições. Tente novamente em instantes."}), 429
+        return fn(*args, **kwargs)
+    return wrapper
+
+# ==========================================================
+# Seed do ADMIN (admin@gmail.com / @123456)
+# ==========================================================
+def _seed_admin_if_missing():
+    try:
+        admin = get_user_by_email("admin@gmail.com")
+        if admin:
+            return
+        salt, hashed = hash_password("@123456")
+        user_id = create_user(
+            email="admin@gmail.com",
+            password_hash=f"{salt}${hashed}",
+            credits=0
+        )
+        # dá muitos créditos
+        from db.models import db_cursor
+        with db_cursor() as cur:
+            cur.execute(_sql("UPDATE users SET credits_remaining = ? WHERE id = ?"), (999999, user_id))
+        print("[BOOT] Usuário admin criado (admin@gmail.com).")
+    except Exception as e:
+        print(f"[BOOT][WARN] Seed admin falhou: {e}")
+
+_seed_admin_if_missing()
+
+# ==========================================================
+# Rota admin para diagnosticar a conexão / criar schema
+# ==========================================================
+@app.get("/__admin/ensure_schema")
+def __admin_ensure_schema():
+    token = request.args.get("token")
+    if token != os.environ.get("SETUP_TOKEN", ""):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    try:
+        init_db()  # cria/ajusta tabelas
+        # pequeno teste de leitura simples
+        from db.models import db_cursor
+        with db_cursor() as cur:
+            cur.execute(_sql("SELECT 1"))
+            cur.fetchone()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ==========================================================
+# Helpers de gating (login só após consumir 3 créditos)
+# ==========================================================
+def _session_ensure_and_get_id() -> str:
     session_id = _get_session_id()
     if not session_id:
         session_id = str(uuid.uuid4())
         get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
     return session_id
 
-# ==========================================================
-# Seed ADMIN (admin@gmail.com / @123456) — idempotente
-# ==========================================================
-def _seed_admin_if_missing():
-    admin = get_user_by_email("admin@gmail.com")
-    if admin:
-        return
-    salt, hashed = hash_password("@123456")
-    user_id = create_user(email="admin@gmail.com", password_hash=f"{salt}${hashed}", credits=999999)
-    print(f"[BOOT] Usuário admin criado (id={user_id}, admin@gmail.com).")
+def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
+    from db.models import db_cursor
+    with db_cursor() as cur:
+        if user_id:
+            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
+            row = cur.fetchone()
+            if row and (row["credits_remaining"] or 0) > 0:
+                return True
+        if session_id:
+            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
+            row = cur.fetchone()
+            if row and (row["credits_temp_remaining"] or 0) > 0:
+                return True
+    return False
 
-try:
-    _seed_admin_if_missing()
-except Exception as e:
-    print(f"[BOOT][WARN] Seed admin falhou: {e}")
-
 # ==========================================================
-# Rotas Web (home/landing)
+# Web
 # ==========================================================
 @app.get("/")
 def home():
-    # Nunca abre modal de login automaticamente.
-    # Garante cookie/sessão com 3 créditos (se nova).
-    credits_left_placeholder = 3  # visual; o real vem do /credits_status
+    credits_left_placeholder = 3
     resp = make_response(render_template("index.html", credits_left=credits_left_placeholder))
     if not _get_session_id():
         sid = str(uuid.uuid4())
@@ -192,43 +235,6 @@ def privacy():
 def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
-# ==========================================================
-# ADMIN: garantir schema (para Postgres/Neon) — protegido por token
-# ==========================================================
-@app.get("/__admin/ensure_schema")
-def ensure_schema():
-    token = request.args.get("token", "")
-    if token != os.environ.get("SETUP_TOKEN", ""):
-        return jsonify({"ok": False, "error": "Forbidden"}), 403
-    try:
-        init_db()
-        return jsonify({"ok": True, "engine": "postgres" if _IS_PG else "sqlite"})
-    except Exception as e:
-        app.logger.exception("ensure_schema failed")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-# ==========================================================
-# Gate de login (frontend decide abrir modal apenas quando preciso)
-# ==========================================================
-def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
-    # Checa créditos do usuário ou da sessão
-    from db.models import db_cursor, _IS_PG as MODELS_IS_PG  # local import
-    def _sql(q: str) -> str:
-        return q.replace("?", "%s") if MODELS_IS_PG else q
-
-    with db_cursor() as cur:
-        if user_id:
-            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
-            r = cur.fetchone()
-            if r and (r["credits_remaining"] or 0) > 0:
-                return True
-        if session_id:
-            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
-            r = cur.fetchone()
-            if r and (r["credits_temp_remaining"] or 0) > 0:
-                return True
-    return False
-
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
@@ -243,31 +249,25 @@ def gate_login(user_id: Optional[int]):
 @app.get("/credits_status")
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
-    from db.models import db_cursor, _IS_PG as MODELS_IS_PG
-    def _sql(q: str) -> str:
-        return q.replace("?", "%s") if MODELS_IS_PG else q
-
+    from db.models import db_cursor
     session_id = _get_session_id()
     user_credits = None
     session_credits = None
-
     with db_cursor() as cur:
         if session_id:
             cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
             r = cur.fetchone()
             if r:
                 session_credits = r["credits_temp_remaining"]
-
         if user_id:
             cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
             u = cur.fetchone()
             if u:
                 user_credits = u["credits_remaining"]
-
     return jsonify({"ok": True, "data": {"session": session_credits, "user": user_credits}})
 
 # ==========================================================
-# Auth simples (email + senha)
+# Auth
 # ==========================================================
 @app.post("/auth/register")
 def auth_register():
@@ -276,10 +276,8 @@ def auth_register():
     password = data.get("password") or ""
     if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
-
     if get_user_by_email(email):
         return jsonify({"ok": False, "error": "Email já cadastrado."}), 409
-
     salt, hashed = hash_password(password)
     user_id = create_user(email=email, password_hash=f"{salt}${hashed}", credits=0)
     token = _make_token(user_id)
@@ -292,16 +290,10 @@ def auth_login():
     password = (data.get("password") or "")
     if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
-
     user = get_user_by_email(email)
     if not user:
         return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
-
-    # password_hash armazenado como "salt$hash"
-    from db.models import db_cursor, _IS_PG as MODELS_IS_PG
-    def _sql(q: str) -> str:
-        return q.replace("?", "%s") if MODELS_IS_PG else q
-
+    from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(_sql("SELECT password_hash FROM users WHERE id = ?"), (user.id,))
         row = cur.fetchone()
@@ -311,10 +303,8 @@ def auth_login():
             salt, stored_hex = row["password_hash"].split("$", 1)
         except Exception:
             return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
-
     if not verify_password(password, salt, stored_hex):
         return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
-
     token = _make_token(user.id)
     return jsonify({"ok": True, "token": token, "user_id": user.id})
 
@@ -323,17 +313,10 @@ def auth_login():
 def user_profile(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": True, "data": {"logged_in": False, "history": []}})
-
-    from db.models import db_cursor, _IS_PG as MODELS_IS_PG
-    def _sql(q: str) -> str:
-        return q.replace("?", "%s") if MODELS_IS_PG else q
-
+    from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(
-            _sql(
-                "SELECT id, type, score_risk, tags, created_at "
-                "FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
-            ),
+            _sql("SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
             (user_id,),
         )
         rows = cur.fetchall()
@@ -350,36 +333,37 @@ def user_profile(user_id: Optional[int]):
                 "tags": tags,
                 "created_at": r["created_at"],
             })
-
         cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
         uc = cur.fetchone()
         credits_remaining = uc["credits_remaining"] if uc else 0
-
     return jsonify({"ok": True, "data": {"logged_in": True, "credits_remaining": credits_remaining, "history": history}})
 
 # ==========================================================
-# Analyze Photo / Text
+# Analyze
 # ==========================================================
+def _ensure_session() -> str:
+    session_id = _get_session_id()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return session_id
+
 @app.post("/analyze_photo")
 @rate_limit
 @require_auth_maybe
 def analyze_photo(user_id: Optional[int]):
     session_id = _ensure_session()
-
     file = request.files.get("file") or request.files.get("photo")
     if not file or not file.filename:
         return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
-
     filename = secure_filename(file.filename.lower())
     if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
         return jsonify({"ok": False, "error": "Formato inválido. Use JPG/PNG."}), 400
-
     file.seek(0, os.SEEK_END)
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_UPLOAD_MB:
         return jsonify({"ok": False, "error": f"Arquivo excede {MAX_UPLOAD_MB}MB."}), 400
-
     session_dir = os.path.join(STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
     save_path = os.path.join(session_dir, filename)
@@ -401,7 +385,6 @@ def analyze_photo(user_id: Optional[int]):
     tags = json.dumps(result.get("tags", []))
     score = int(result.get("score_risk", 0))
     record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
-
     return jsonify({"ok": True, "analysis": result})
 
 @app.post("/analyze_text")
@@ -409,7 +392,6 @@ def analyze_photo(user_id: Optional[int]):
 @require_auth_maybe
 def analyze_text(user_id: Optional[int]):
     session_id = _ensure_session()
-
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     if not text:
@@ -431,27 +413,24 @@ def analyze_text(user_id: Optional[int]):
     tags = json.dumps(result.get("tags", []))
     score = int(result.get("score_risk", 0))
     record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
-
     return jsonify({"ok": True, "analysis": result})
 
 # ==========================================================
-# Pagamentos (Mock)
+# Pagamentos (mock)
 # ==========================================================
 @app.post("/purchase")
 @require_auth_maybe
 def purchase(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": False, "error": "É necessário login para comprar créditos."}), 401
-
     data = request.get_json(silent=True) or {}
-    package = int(data.get("package") or 10)  # 10, 20, 50
-
+    package = int(data.get("package") or 10)
     provider = get_payment_provider()
     checkout = provider.start_checkout(user_id=user_id, package=package)
     return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
 
 # ==========================================================
-# Servir arquivos temporários (debug/local)
+# Servir temp (debug)
 # ==========================================================
 @app.get("/storage/temp/<session_id>/<path:fname>")
 def serve_temp(session_id, fname):
