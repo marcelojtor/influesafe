@@ -19,9 +19,9 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-# ------ DB (sqlite/pg via camada db) ------
-from db import init_db
+# ------ DB (sqlite ou Postgres via psycopg) ------
 from db.models import (
+    init_db,
     get_or_create_session,
     consume_session_credit_atomic,
     consume_user_credit_atomic,
@@ -36,7 +36,7 @@ from utils.rate_limit import SimpleRateLimiter
 
 # ------ Serviços ------
 from services.openai_client import OpenAIClient
-from payments import get_payment_provider  # payments/__init__.py deve expor get_payment_provider
+from payments import get_payment_provider  # garante payments/__init__.py -> get_payment_provider
 
 # ==========================================================
 # Config
@@ -56,7 +56,10 @@ BASE_DIR = os.path.dirname(__file__)
 STORAGE_DIR = os.path.join(BASE_DIR, "storage", "temp")
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
-# Inicializa DB (idempotente)
+# Detecta se é Postgres (para logs apenas)
+_IS_PG = os.environ.get("DATABASE_URL", "").startswith(("postgresql://", "postgres://"))
+
+# Inicializa DB (tabelas)
 try:
     init_db()
     print("[BOOT] DB inicializado.")
@@ -74,39 +77,8 @@ rate_limiter = SimpleRateLimiter(
 )
 
 # ==========================================================
-# Compatibilidade de SQL placeholder (SQLite x Postgres)
+# Token HMAC simples (MVP)
 # ==========================================================
-_IS_PG = os.environ.get("DATABASE_URL", "").startswith(("postgresql://", "postgres://"))
-def _sql(q: str) -> str:
-    """Converte placeholders '?' → '%s' somente quando usando Postgres."""
-    return q.replace("?", "%s") if _IS_PG else q
-
-# ==========================================================
-# Helpers de sessão e auth
-# ==========================================================
-def _ip_hash() -> str:
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr) or ""
-    return hash_ip(ip)
-
-def _ua_hash() -> str:
-    ua = (request.headers.get("User-Agent", "") or "") + "|" + (request.headers.get("Accept", "") or "")
-    return hash_ua(ua)
-
-def _get_session_id() -> Optional[str]:
-    return request.cookies.get("influe_session")
-
-def _ensure_session_cookie(resp, session_id: str):
-    resp.set_cookie(
-        "influe_session",
-        session_id,
-        max_age=60 * 60 * 24 * 7,
-        httponly=True,
-        samesite="Lax",
-        secure=False if app.debug else True,
-    )
-    return resp
-
-# --- Token HMAC simples (MVP) ---
 def _make_token(user_id: int) -> str:
     secret = app.config["SECRET_KEY"].encode()
     msg = str(user_id).encode()
@@ -147,29 +119,47 @@ def rate_limit(fn):
     return wrapper
 
 # ==========================================================
-# Seed do ADMIN (admin@gmail.com / @123456)
+# Helpers de sessão
+# ==========================================================
+def _ip_hash() -> str:
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr) or ""
+    return hash_ip(ip)
+
+def _ua_hash() -> str:
+    ua = (request.headers.get("User-Agent", "") or "") + "|" + (request.headers.get("Accept", "") or "")
+    return hash_ua(ua)
+
+def _get_session_id() -> Optional[str]:
+    return request.cookies.get("influe_session")
+
+def _ensure_session_cookie(resp, session_id: str):
+    resp.set_cookie(
+        "influe_session",
+        session_id,
+        max_age=60 * 60 * 24 * 7,
+        httponly=True,
+        samesite="Lax",
+        secure=False if app.debug else True,
+    )
+    return resp
+
+def _ensure_session() -> str:
+    session_id = _get_session_id()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return session_id
+
+# ==========================================================
+# Seed ADMIN (admin@gmail.com / @123456) — idempotente
 # ==========================================================
 def _seed_admin_if_missing():
-    """
-    Cria usuário admin com muitos créditos se ainda não existir.
-    Email: admin@gmail.com
-    Senha: @123456
-    """
-    from db.models import db_cursor  # import local
-
     admin = get_user_by_email("admin@gmail.com")
     if admin:
         return
-
     salt, hashed = hash_password("@123456")
-    user_id = create_user(
-        email="admin@gmail.com",
-        password_hash=f"{salt}${hashed}",
-        credits=0  # ajustaremos abaixo
-    )
-    with db_cursor() as cur:
-        cur.execute(_sql("UPDATE users SET credits_remaining = ? WHERE id = ?"), (999999, user_id))
-    print("[BOOT] Usuário admin criado (admin@gmail.com).")
+    user_id = create_user(email="admin@gmail.com", password_hash=f"{salt}${hashed}", credits=999999)
+    print(f"[BOOT] Usuário admin criado (id={user_id}, admin@gmail.com).")
 
 try:
     _seed_admin_if_missing()
@@ -177,75 +167,13 @@ except Exception as e:
     print(f"[BOOT][WARN] Seed admin falhou: {e}")
 
 # ==========================================================
-# Rota de SETUP seguro (cria schema + seed admin)
-# ==========================================================
-@app.get("/__admin/ensure_schema")
-def ensure_schema():
-    """
-    Setup idempotente do schema.
-    Protegido por token de ambiente: SETUP_TOKEN (query param: ?token=...).
-    """
-    setup_token = os.environ.get("SETUP_TOKEN", "")
-    token = request.args.get("token", "")
-    if not setup_token or token != setup_token:
-        return jsonify({"ok": False, "error": "Forbidden"}), 403
-
-    from db.models import db_cursor
-    result = {"created_or_ok": [], "errors": {}}
-    try:
-        # Cria tabelas conforme versão do código
-        init_db()
-        # Verifica existência com selects simples
-        for t in ("users", "sessions", "analyses", "purchases"):
-            try:
-                with db_cursor() as cur:
-                    cur.execute(_sql(f"SELECT 1 FROM {t} LIMIT 1"))
-                result["created_or_ok"].append(t)
-            except Exception as te:
-                result["errors"][t] = str(te)
-
-        # Seed admin
-        try:
-            _seed_admin_if_missing()
-            result["admin_seed"] = "ok"
-        except Exception as se:
-            result["admin_seed"] = f"error: {se}"
-
-        return jsonify({"ok": True, "status": result})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-# ==========================================================
-# Helpers de gating (login só após consumir 3 créditos)
-# ==========================================================
-def _session_ensure_and_get_id() -> str:
-    session_id = _get_session_id()
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
-    return session_id
-
-def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
-    from db.models import db_cursor
-    with db_cursor() as cur:
-        if user_id:
-            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
-            row = cur.fetchone()
-            if row and (row["credits_remaining"] or 0) > 0:
-                return True
-        if session_id:
-            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
-            row = cur.fetchone()
-            if row and (row["credits_temp_remaining"] or 0) > 0:
-                return True
-    return False
-
-# ==========================================================
 # Rotas Web (home/landing)
 # ==========================================================
 @app.get("/")
 def home():
-    credits_left_placeholder = 3  # real vem do /credits_status via JS
+    # Nunca abre modal de login automaticamente.
+    # Garante cookie/sessão com 3 créditos (se nova).
+    credits_left_placeholder = 3  # visual; o real vem do /credits_status
     resp = make_response(render_template("index.html", credits_left=credits_left_placeholder))
     if not _get_session_id():
         sid = str(uuid.uuid4())
@@ -265,8 +193,42 @@ def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
 # ==========================================================
-# Gate de login
+# ADMIN: garantir schema (para Postgres/Neon) — protegido por token
 # ==========================================================
+@app.get("/__admin/ensure_schema")
+def ensure_schema():
+    token = request.args.get("token", "")
+    if token != os.environ.get("SETUP_TOKEN", ""):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    try:
+        init_db()
+        return jsonify({"ok": True, "engine": "postgres" if _IS_PG else "sqlite"})
+    except Exception as e:
+        app.logger.exception("ensure_schema failed")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+# ==========================================================
+# Gate de login (frontend decide abrir modal apenas quando preciso)
+# ==========================================================
+def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
+    # Checa créditos do usuário ou da sessão
+    from db.models import db_cursor, _IS_PG as MODELS_IS_PG  # local import
+    def _sql(q: str) -> str:
+        return q.replace("?", "%s") if MODELS_IS_PG else q
+
+    with db_cursor() as cur:
+        if user_id:
+            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
+            r = cur.fetchone()
+            if r and (r["credits_remaining"] or 0) > 0:
+                return True
+        if session_id:
+            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
+            r = cur.fetchone()
+            if r and (r["credits_temp_remaining"] or 0) > 0:
+                return True
+    return False
+
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
@@ -281,7 +243,10 @@ def gate_login(user_id: Optional[int]):
 @app.get("/credits_status")
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
-    from db.models import db_cursor
+    from db.models import db_cursor, _IS_PG as MODELS_IS_PG
+    def _sql(q: str) -> str:
+        return q.replace("?", "%s") if MODELS_IS_PG else q
+
     session_id = _get_session_id()
     user_credits = None
     session_credits = None
@@ -333,7 +298,10 @@ def auth_login():
         return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
 
     # password_hash armazenado como "salt$hash"
-    from db.models import db_cursor
+    from db.models import db_cursor, _IS_PG as MODELS_IS_PG
+    def _sql(q: str) -> str:
+        return q.replace("?", "%s") if MODELS_IS_PG else q
+
     with db_cursor() as cur:
         cur.execute(_sql("SELECT password_hash FROM users WHERE id = ?"), (user.id,))
         row = cur.fetchone()
@@ -356,10 +324,16 @@ def user_profile(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": True, "data": {"logged_in": False, "history": []}})
 
-    from db.models import db_cursor
+    from db.models import db_cursor, _IS_PG as MODELS_IS_PG
+    def _sql(q: str) -> str:
+        return q.replace("?", "%s") if MODELS_IS_PG else q
+
     with db_cursor() as cur:
         cur.execute(
-            _sql("SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
+            _sql(
+                "SELECT id, type, score_risk, tags, created_at "
+                "FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
+            ),
             (user_id,),
         )
         rows = cur.fetchall()
@@ -386,13 +360,6 @@ def user_profile(user_id: Optional[int]):
 # ==========================================================
 # Analyze Photo / Text
 # ==========================================================
-def _ensure_session() -> str:
-    session_id = _get_session_id()
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
-    return session_id
-
 @app.post("/analyze_photo")
 @rate_limit
 @require_auth_maybe
