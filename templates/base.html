@@ -10,18 +10,24 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
   <style>
-    /* -------- Modal (corrigido: oculto por padrão) -------- */
+    /* -------- Modal (oculto por padrão) -------- */
     .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
     .modal{position:fixed;inset:0;display:none;place-items:center;z-index:50;pointer-events:none}
     .modal.show{display:grid}
     .modal-backdrop.show{display:block}
     .modal .panel{width:min(520px,92vw);background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:1rem 1rem 1.25rem;pointer-events:auto}
     .row{display:flex;gap:.5rem;flex-wrap:wrap}
+    .col{display:flex;flex-direction:column}
     .field{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
     .field input{width:100%;border-radius:12px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);padding:.8rem .9rem;font-family:inherit}
     .divider{height:1px;background:var(--border);margin:1rem 0}
     .pill{font-size:.85rem;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border);padding:.3rem .6rem;border-radius:999px}
     .tag{display:inline-flex;gap:.35rem;align-items:center}
+    .tabs{display:flex;gap:.5rem;border:1px solid var(--border);border-radius:10px;padding:.25rem;background:var(--panel-2);margin:.5rem 0 0}
+    .tab{flex:1;text-align:center;border-radius:8px;padding:.45rem .6rem;cursor:pointer;user-select:none}
+    .tab.active{background:var(--panel);border:1px solid var(--border)}
+    .muted-link{color:var(--muted);text-decoration:underline;cursor:pointer}
+    .hint{font-size:.9rem;color:var(--muted)}
   </style>
 </head>
 <body>
@@ -43,7 +49,7 @@
         <span class="muted" style="margin-left:.25rem;">
           Créditos:
           <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">
-            Sessão: {{ credits_left|default(0) }} | Usuário: —
+            Sessão: {{ credits_left|default(0) }} | Usuário: — 
           </strong>
         </span>
 
@@ -71,30 +77,69 @@
   <!-- Backdrop do modal -->
   <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
 
-  <!-- Modal de Autenticação -->
+  <!-- Modal de Autenticação (Entrar / Criar conta) -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
       <div class="flex between center-v">
         <h2 id="auth-title" style="margin:.25rem 0 0;">Acessar INFLUE</h2>
         <button id="auth-close" class="btn btn-ghost" type="button" aria-label="Fechar">Fechar</button>
       </div>
-      <p class="muted" style="margin:.25rem 0 0;">Use seu e-mail para criar conta ou entrar.</p>
 
-      <div class="field">
-        <label for="auth-email" class="muted">E-mail</label>
-        <input id="auth-email" type="email" placeholder="voce@exemplo.com" autocomplete="email" />
-      </div>
-      <div class="field">
-        <label for="auth-password" class="muted">Senha</label>
-        <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" />
+      <!-- Tabs -->
+      <div class="tabs" role="tablist" aria-label="Opções de autenticação">
+        <div id="tab-login"  class="tab active" role="tab" aria-selected="true"  tabindex="0">Entrar</div>
+        <div id="tab-signup" class="tab"        role="tab" aria-selected="false" tabindex="-1">Criar conta</div>
       </div>
 
-      <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
-        <button id="btn-login" class="btn btn-ghost" type="button">Entrar</button>
-        <button id="btn-register" class="btn btn-primary" type="button">Criar conta</button>
-      </div>
+      <!-- FORM: ENTRAR -->
+      <form id="form-login" class="col" autocomplete="on">
+        <div class="field">
+          <label for="auth-email" class="muted">E-mail</label>
+          <input id="auth-email" type="email" placeholder="voce@exemplo.com" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label for="auth-password" class="muted">Senha</label>
+          <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" required />
+        </div>
 
-      <div id="feedback" class="muted" role="status" aria-live="polite" style="margin-top:.5rem;min-height:1.25rem;"></div>
+        <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
+          <button id="btn-login" class="btn btn-primary" type="submit">Entrar</button>
+        </div>
+
+        <p class="hint" style="margin:.5rem 0 0;">
+          Ainda não é cadastrado? <span id="link-open-signup" class="muted-link">Crie sua conta agora</span>.
+        </p>
+      </form>
+
+      <!-- FORM: CRIAR CONTA -->
+      <form id="form-signup" class="col" style="display:none;" autocomplete="on">
+        <div class="field">
+          <label for="reg-email" class="muted">E-mail</label>
+          <input id="reg-email" type="email" placeholder="voce@exemplo.com" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label for="reg-email2" class="muted">Confirmar e-mail</label>
+          <input id="reg-email2" type="email" placeholder="voce@exemplo.com" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label for="reg-pass" class="muted">Senha</label>
+          <input id="reg-pass" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password" required />
+        </div>
+        <div class="field">
+          <label for="reg-pass2" class="muted">Confirmar senha</label>
+          <input id="reg-pass2" type="password" placeholder="Repita a senha" autocomplete="new-password" required />
+        </div>
+
+        <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
+          <button id="btn-register" class="btn btn-primary" type="submit">Criar conta</button>
+        </div>
+
+        <p class="hint" style="margin:.5rem 0 0;">
+          Já possui cadastro? <span id="link-open-login" class="muted-link">Entrar</span>.
+        </p>
+      </form>
+
+      <div id="feedback" class="muted" role="status" aria-live="polite" style="margin-top:.75rem;min-height:1.25rem;"></div>
 
       <div class="divider"></div>
       <small class="muted">Ao continuar, você concorda com nossos termos e a política de privacidade.</small>
@@ -102,15 +147,20 @@
   </section>
 
   <script>
-    // Controles mínimos do modal (não abre automaticamente)
+    // Controles mínimos do modal + tabs
     (function(){
       const modal = document.getElementById('auth-modal');
       const backdrop = document.getElementById('auth-backdrop');
       const openBtn = document.getElementById('btn-open-auth');
       const closeBtn = document.getElementById('auth-close');
+      const tabLogin  = document.getElementById('tab-login');
+      const tabSignup = document.getElementById('tab-signup');
+      const formLogin  = document.getElementById('form-login');
+      const formSignup = document.getElementById('form-signup');
+      const linkOpenSignup = document.getElementById('link-open-signup');
+      const linkOpenLogin  = document.getElementById('link-open-login');
 
       function showModal(){
-        if (!modal || !backdrop) return;
         modal.classList.add('show');
         backdrop.classList.add('show');
         modal.setAttribute('aria-hidden','false');
@@ -118,11 +168,21 @@
         setTimeout(()=>document.getElementById('auth-email')?.focus(), 50);
       }
       function hideModal(){
-        if (!modal || !backdrop) return;
         modal.classList.remove('show');
         backdrop.classList.remove('show');
         modal.setAttribute('aria-hidden','true');
         backdrop.setAttribute('aria-hidden','true');
+      }
+      function setTab(mode) {
+        const isLogin = mode === 'login';
+        tabLogin.classList.toggle('active', isLogin);
+        tabSignup.classList.toggle('active', !isLogin);
+        tabLogin.setAttribute('aria-selected', isLogin ? 'true':'false');
+        tabSignup.setAttribute('aria-selected', !isLogin ? 'true':'false');
+        formLogin.style.display  = isLogin ? '' : 'none';
+        formSignup.style.display = isLogin ? 'none' : '';
+        if (isLogin) document.getElementById('auth-email')?.focus();
+        else document.getElementById('reg-email')?.focus();
       }
 
       openBtn?.addEventListener('click', showModal);
@@ -130,9 +190,15 @@
       backdrop?.addEventListener('click', hideModal);
       document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') hideModal(); });
 
-      // Helpers globais para main.js
+      tabLogin?.addEventListener('click', ()=>setTab('login'));
+      tabSignup?.addEventListener('click', ()=>setTab('signup'));
+      linkOpenSignup?.addEventListener('click', ()=>setTab('signup'));
+      linkOpenLogin?.addEventListener('click',  ()=>setTab('login'));
+
+      // Expor helpers para main.js
       window.__influe_show_auth__ = showModal;
       window.__influe_hide_auth__ = hideModal;
+      window.__influe_set_auth_tab__ = setTab;
     })();
   </script>
 
