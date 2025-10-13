@@ -238,7 +238,8 @@ def health():
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
-    session_id = _get_session_id()
+    # AJUSTE: garantir que sessão exista aqui também
+    session_id = _session_ensure_and_get_id()
     # Se houver qualquer crédito (usuário ou sessão), não exigir login
     if _has_any_credit(user_id, session_id):
         return jsonify({"ok": True, "require_login": False, "logged_in": bool(user_id)})
@@ -277,7 +278,14 @@ def credits_status(user_id: Optional[int]):
         cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
         r = cur.fetchone()
         if r:
-            session_credits = r["credits_temp_remaining"]
+            # AJUSTE: backfill imediato se base antiga retornou NULL
+            raw = r["credits_temp_remaining"]
+            if raw is None:
+                cur.execute(_sql("UPDATE sessions SET credits_temp_remaining = ? WHERE session_id = ?"),
+                            (FREE_CREDITS, sid))
+                session_credits = FREE_CREDITS
+            else:
+                session_credits = raw
         if user_id:
             cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
             u = cur.fetchone()
