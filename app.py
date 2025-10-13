@@ -187,7 +187,7 @@ def __admin_ensure_schema():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 # ==========================================================
-# Helpers de gating (login só após consumir 3 créditos)
+# Helpers de sessão
 # ==========================================================
 def _session_ensure_and_get_id() -> str:
     session_id = _get_session_id()
@@ -195,6 +195,39 @@ def _session_ensure_and_get_id() -> str:
         session_id = str(uuid.uuid4())
         get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
     return session_id
+
+def _ensure_session_created() -> Tuple[str, bool]:
+    """
+    Garante que exista sessão. Retorna (session_id, created_now).
+    """
+    sid = _get_session_id()
+    if sid:
+        return sid, False
+    sid = str(uuid.uuid4())
+    get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return sid, True
+
+def _ensure_session_persisted(sid: str) -> None:
+    """
+    Garante que a linha da sessão exista; se não existir, insere com FREE_CREDITS.
+    Também serve para bases antigas que possam não ter persistido a sessão.
+    """
+    from db.models import db_cursor
+    with db_cursor() as cur:
+        cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
+        row = cur.fetchone()
+        if not row:
+            # insere de forma idempotente
+            try:
+                cur.execute(
+                    _sql(
+                        "INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)"
+                    ),
+                    (sid, _ip_hash(), _ua_hash(), FREE_CREDITS),
+                )
+            except Exception:
+                # pode falhar por corrida; ignorar se já existir
+                pass
 
 def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
     from db.models import db_cursor
@@ -238,39 +271,43 @@ def health():
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
-    # AJUSTE: garantir que sessão exista aqui também
-    session_id = _session_ensure_and_get_id()
+    # GARANTIR sessão e cookie aqui também
+    sid, created_now = _ensure_session_created()
+    _ensure_session_persisted(sid)
+    has_cookie = bool(_get_session_id())
+
     # Se houver qualquer crédito (usuário ou sessão), não exigir login
-    if _has_any_credit(user_id, session_id):
-        return jsonify({"ok": True, "require_login": False, "logged_in": bool(user_id)})
+    if _has_any_credit(user_id, sid):
+        payload = {"ok": True, "require_login": False, "logged_in": bool(user_id)}
+        resp = make_response(jsonify(payload))
+        if created_now or not has_cookie:
+            _ensure_session_cookie(resp, sid)
+        return resp
 
     # Sem créditos:
     if user_id:
-        # Usuário logado sem créditos => não pedir login; sinalizar compra
-        return jsonify({"ok": True, "require_login": False, "logged_in": True, "need_purchase": True})
-    # Convidado sem créditos de sessão => aí sim pedir login
-    return jsonify({"ok": True, "require_login": True, "logged_in": False, "reason": "Sem créditos; faça login para comprar."})
+        payload = {"ok": True, "require_login": False, "logged_in": True, "need_purchase": True}
+        resp = make_response(jsonify(payload))
+        if created_now or not has_cookie:
+            _ensure_session_cookie(resp, sid)
+        return resp
+
+    payload = {"ok": True, "require_login": True, "logged_in": False, "reason": "Sem créditos; faça login para comprar."}
+    resp = make_response(jsonify(payload))
+    if created_now or not has_cookie:
+        _ensure_session_cookie(resp, sid)
+    return resp
 
 # ==========================================================
 # Status de créditos
 # ==========================================================
-def _ensure_session_created() -> Tuple[str, bool]:
-    """
-    Garante que exista sessão. Retorna (session_id, created_now).
-    """
-    sid = _get_session_id()
-    if sid:
-        return sid, False
-    sid = str(uuid.uuid4())
-    get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
-    return sid, True
-
 @app.get("/credits_status")
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
     from db.models import db_cursor
     # Garante sessão e cookie aqui (evita '—' no primeiro paint)
     sid, created_now = _ensure_session_created()
+    _ensure_session_persisted(sid)
 
     user_credits = None
     session_credits = None
@@ -278,7 +315,7 @@ def credits_status(user_id: Optional[int]):
         cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
         r = cur.fetchone()
         if r:
-            # AJUSTE: backfill imediato se base antiga retornou NULL
+            # Backfill imediato se base antiga retornou NULL
             raw = r["credits_temp_remaining"]
             if raw is None:
                 cur.execute(_sql("UPDATE sessions SET credits_temp_remaining = ? WHERE session_id = ?"),
@@ -293,11 +330,11 @@ def credits_status(user_id: Optional[int]):
                 user_credits = u["credits_remaining"]
 
     payload = {"ok": True, "data": {"session": session_credits, "user": user_credits, "free_credits": FREE_CREDITS}}
-    if created_now:
-        resp = make_response(jsonify(payload))
+    resp = make_response(jsonify(payload))
+    # Define cookie quando criado agora OU quando por algum motivo ainda não estiver presente
+    if created_now or not _get_session_id():
         _ensure_session_cookie(resp, sid)
-        return resp
-    return jsonify(payload)
+    return resp
 
 # ==========================================================
 # Auth
