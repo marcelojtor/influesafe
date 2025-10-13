@@ -1,156 +1,82 @@
 /* INFLUE — Controller (mobile-first)
- * Versão focada em: login/registro funcionando SEM travar a UI.
- * - Liga listeners após DOM pronto (robusto).
- * - Previne submit/reload.
- * - Exibe feedback no card e no console para diagnóstico.
- * - Mantém todo o resto (análise, créditos, compra mock).
+ * Objetivo:
+ * - Home sempre acessível.
+ * - Modal de autenticação com modos: Entrar / Criar conta (com confirmações).
+ * - 3 créditos de SESSÃO sem barreira; exigir login só ao esgotar ou ao comprar.
+ * - Botões do modal: Entrar e Criar conta funcionais.
+ * - Fluxo de análise (foto/texto), consumo de crédito e compra (mock).
  */
 
 (function () {
   "use strict";
 
+  // -----------------------------
+  // Shortcuts / elementos
+  // -----------------------------
   const $ = (sel) => document.querySelector(sel);
 
-  // ---------- Estado/seletores ----------
-  let elYear, elCredits, elBtnOpenAuth, elBtnLogout, elBtnPurchase, elUserLabel, elUserState;
-  let elAuthEmail, elAuthPassword, elBtnLogin, elBtnRegister, elFeedback;
-  let elInputPhoto, elBtnPhoto, elTextarea, elBtnSubmitText;
-  let elOut, elOutSummary, elOutScore, elOutTags, elOutRecs;
+  // Rodapé
+  const elYear = $("#year");
 
-  const showAuth = () => window.__influe_show_auth__?.();
-  const hideAuth = () => window.__influe_hide_auth__?.();
+  // Header (estado e créditos)
+  const elCredits = $("#credits-left");
+  const elBtnOpenAuth = $("#btn-open-auth");
+  const elBtnLogout = $("#btn-logout");
+  const elBtnPurchase = $("#btn-purchase");
+  const elUserLabel = $("#user-label");
+  const elUserState = $("#user-state");
 
-  // ---------- Util ----------
+  // Modal (campos e botões — ENTRAR)
+  const elAuthEmail = $("#auth-email");
+  const elAuthPassword = $("#auth-password");
+  const formLogin = $("#form-login");
+  const elBtnLogin = $("#btn-login");
+
+  // Modal (campos e botões — CRIAR CONTA)
+  const formSignup = $("#form-signup");
+  const elRegEmail = $("#reg-email");
+  const elRegEmail2 = $("#reg-email2");
+  const elRegPass = $("#reg-pass");
+  const elRegPass2 = $("#reg-pass2");
+  const elBtnRegister = $("#btn-register");
+
+  // Home / análise
+  const elFeedback = $("#feedback");
+  const elInputPhoto = $("#photo-input");
+  const elBtnPhoto = $("#btn-photo");
+  const elTextarea = $("#textcontent");
+  const elBtnSubmitText = $("#btn-submit-text");
+
+  // Saída de análise
+  const elOut = $("#analysis-output");
+  const elOutSummary = $("#analysis-summary");
+  const elOutScore = $("#analysis-score");
+  const elOutTags = $("#analysis-tags");
+  const elOutRecs = $("#analysis-recs");
+
+  // Modal controls fornecidos por base.html
+  const showAuth = window.__influe_show_auth__ || (() => {});
+  const hideAuth = window.__influe_hide_auth__ || (() => {});
+  const setAuthTab = window.__influe_set_auth_tab__ || (() => {});
+
+  // -----------------------------
+  // Utilidades
+  // -----------------------------
+  if (elYear) elYear.textContent = new Date().getFullYear();
+
   function setFeedback(msg) {
     if (elFeedback) elFeedback.textContent = msg || "";
-    console.log("[INFLUE]", msg);
-  }
-  function getToken() { return localStorage.getItem("influe_token") || null; }
-  function setToken(t) { if (t) localStorage.setItem("influe_token", t); }
-  function clearToken() { localStorage.removeItem("influe_token"); }
-  function authHeaders() { const t = getToken(); return t ? { Authorization: "Bearer " + t } : {}; }
-
-  function setUserState(label, color = "#6aa8ff") {
-    if (elUserLabel) elUserLabel.textContent = label;
-    const circle = elUserState?.querySelector("circle");
-    if (circle) circle.setAttribute("fill", color);
   }
 
-  function updateAuthUI() {
-    const logged = !!getToken();
-    if (elBtnOpenAuth) elBtnOpenAuth.style.display = logged ? "none" : "";
-    if (elBtnLogout) elBtnLogout.style.display = logged ? "" : "none";
-    if (logged) setUserState("Logado", "#00e676"); else setUserState("Convidado", "#6aa8ff");
-  }
-
-  async function updateCreditsLabel() {
-    try {
-      const res = await fetch("/credits_status", { headers: authHeaders() });
-      const json = await res.json();
-      if (!json?.ok) return;
-      const s = json.data?.session ?? "—";
-      const u = json.data?.user ?? "—";
-      if (elCredits) elCredits.textContent = `Sessão: ${s} | Usuário: ${u}`;
-    } catch {}
-  }
-
-  async function requireLoginIfNoCredits() {
-    try {
-      const res = await fetch("/gate/login", { headers: authHeaders() });
-      const json = await res.json();
-      if (json?.ok && json.require_login) {
-        showAuth();
-        return true;
-      }
-    } catch {}
-    return false;
-  }
-
-  // ---------- Auth ----------
-  async function loginOrRegister(isRegister) {
-    const email = (elAuthEmail?.value || "").trim().toLowerCase();
-    const password = elAuthPassword?.value || "";
-    if (!email || !password) {
-      setFeedback("Informe e-mail e senha.");
-      return;
-    }
-    const url = isRegister ? "/auth/register" : "/auth/login";
-    setFeedback(isRegister ? "Criando conta..." : "Entrando...");
-
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const json = await res.json();
-      console.log("[INFLUE] Auth response:", json);
-
-      if (json.ok && json.token) {
-        setToken(json.token);
-        hideAuth();
-        setFeedback(isRegister ? "Conta criada com sucesso." : "Login efetuado.");
-        updateAuthUI();
-        await updateCreditsLabel();
-      } else {
-        setFeedback(json.error || "Falha na autenticação.");
-      }
-    } catch (e) {
-      console.error(e);
-      setFeedback("Erro de rede.");
-    }
-  }
-
-  function bindAuthEvents() {
-    // Evita que Enter em inputs tente submeter algo inexistente
-    const stop = (e) => { if (e) e.preventDefault(); };
-    elBtnLogin?.addEventListener("click", (e) => { stop(e); loginOrRegister(false); });
-    elBtnRegister?.addEventListener("click", (e) => { stop(e); loginOrRegister(true); });
-
-    // Enter para enviar (no foco dos campos)
-    elAuthEmail?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loginOrRegister(false); }});
-    elAuthPassword?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loginOrRegister(false); }});
-
-    elBtnLogout?.addEventListener("click", (e) => {
-      e?.preventDefault();
-      clearToken();
-      updateAuthUI();
-      updateCreditsLabel();
-      setFeedback("");
-    });
-
-    // Abrir o modal manualmente pelo botão do topo
-    elBtnOpenAuth?.addEventListener("click", (e) => { e?.preventDefault(); showAuth(); });
-  }
-
-  // ---------- Compra (mock) ----------
-  function bindPurchase() {
-    elBtnPurchase?.addEventListener("click", async () => {
-      if (!getToken()) { showAuth(); return; }
-      setFeedback("Processando compra...");
-      try {
-        const res = await fetch("/purchase", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ package: 10 }),
-        });
-        if (res.status === 401) { showAuth(); return; }
-        const json = await res.json();
-        if (json.ok) {
-          setFeedback("Créditos adicionados (mock).");
-          await updateCreditsLabel();
-        } else {
-          setFeedback(json.error || "Falha na compra.");
-        }
-      } catch { setFeedback("Erro de rede."); }
-    });
-  }
-
-  // ---------- Análise ----------
   function showAnalysis(analysis) {
-    const score = typeof analysis.score_risk === "number" ? analysis.score_risk : "—";
-    const tags = Array.isArray(analysis.tags) ? analysis.tags.join(", ") : "—";
-    const recs = Array.isArray(analysis.recommendations) ? analysis.recommendations : [];
+    const score =
+      typeof analysis.score_risk === "number" ? analysis.score_risk : "—";
+    const tags = Array.isArray(analysis.tags)
+      ? analysis.tags.join(", ")
+      : "—";
+    const recs = Array.isArray(analysis.recommendations)
+      ? analysis.recommendations
+      : [];
 
     if (elOutSummary) elOutSummary.textContent = analysis.summary || "Análise concluída.";
     if (elOutScore) elOutScore.textContent = String(score);
@@ -167,7 +93,218 @@
     if (elOut) elOut.style.display = "block";
   }
 
-  // Polyfill toBlob
+  // -----------------------------
+  // Auth helpers (token)
+  // -----------------------------
+  function getToken() {
+    return localStorage.getItem("influe_token") || null;
+  }
+  function setToken(token) {
+    if (token) localStorage.setItem("influe_token", token);
+  }
+  function clearToken() {
+    localStorage.removeItem("influe_token");
+  }
+  function authHeaders() {
+    const t = getToken();
+    return t ? { Authorization: "Bearer " + t } : {};
+  }
+
+  function setUserState(label, color = "#6aa8ff") {
+    if (elUserLabel) elUserLabel.textContent = label;
+    const circle = elUserState?.querySelector("circle");
+    if (circle) circle.setAttribute("fill", color);
+  }
+
+  function updateAuthUI() {
+    const logged = !!getToken();
+    if (elBtnOpenAuth) elBtnOpenAuth.style.display = logged ? "none" : "";
+    if (elBtnLogout) elBtnLogout.style.display = logged ? "" : "none";
+    if (logged) setUserState("Logado", "#00e676");
+    else setUserState("Convidado", "#6aa8ff");
+  }
+
+  // -----------------------------
+  // Créditos (status) + Gate
+  // -----------------------------
+  async function updateCreditsLabel() {
+    try {
+      const res = await fetch("/credits_status", { headers: authHeaders() });
+      const json = await res.json();
+      if (!json?.ok) return;
+      const data = json.data || {};
+      const s = data.session ?? "—";
+      const u = data.user ?? "—";
+      if (elCredits) elCredits.textContent = `Sessão: ${s} | Usuário: ${u}`;
+    } catch (_) {
+      // silencioso
+    }
+  }
+
+  async function requireLoginIfNoCredits() {
+    try {
+      const res = await fetch("/gate/login", { headers: authHeaders() });
+      const json = await res.json();
+      if (json?.ok && json.require_login) {
+        setAuthTab('login');
+        showAuth();
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  // -----------------------------
+  // Validações simples
+  // -----------------------------
+  function isValidEmail(v) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+
+  // -----------------------------
+  // Login / Registro (modal)
+  // -----------------------------
+  async function doLogin(email, password) {
+    setFeedback("Entrando...");
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const json = await res.json();
+      if (json.ok && json.token) {
+        setToken(json.token);
+        hideAuth();
+        setFeedback("Login efetuado.");
+        updateAuthUI();
+        await updateCreditsLabel();
+      } else {
+        setFeedback(json.error || "Falha na autenticação.");
+      }
+    } catch (_) {
+      setFeedback("Erro de rede.");
+    }
+  }
+
+  async function doRegister(email, password) {
+    setFeedback("Criando conta...");
+    try {
+      const res = await fetch("/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const json = await res.json();
+      if (json.ok && json.token) {
+        // Após criar conta: não forçar uso imediato — deixa usuário entrar conscientemente
+        // Porém, como já temos o token, tratamos como logado.
+        setToken(json.token);
+        setFeedback("Conta criada com sucesso.");
+        // Retorna à aba de login? — aqui manteremos apenas fechar modal e atualizar header.
+        hideAuth();
+        updateAuthUI();
+        await updateCreditsLabel();
+      } else {
+        setFeedback(json.error || "Falha ao criar conta.");
+      }
+    } catch (_) {
+      setFeedback("Erro de rede.");
+    }
+  }
+
+  // ENTRAR: submit
+  formLogin?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const email = (elAuthEmail?.value || "").trim().toLowerCase();
+    const password = elAuthPassword?.value || "";
+    if (!email || !password) {
+      setFeedback("Informe e-mail e senha.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setFeedback("E-mail inválido.");
+      return;
+    }
+    doLogin(email, password);
+  });
+
+  // CRIAR CONTA: submit (com confirmações)
+  formSignup?.addEventListener("submit", (e) => {
+    e.preventDefault();
+
+    const email  = (elRegEmail?.value || "").trim().toLowerCase();
+    const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
+    const pass   = elRegPass?.value || "";
+    const pass2  = elRegPass2?.value || "";
+
+    if (!email || !email2 || !pass || !pass2) {
+      setFeedback("Preencha todos os campos.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setFeedback("E-mail inválido.");
+      return;
+    }
+    if (email !== email2) {
+      setFeedback("Os e-mails não conferem.");
+      return;
+    }
+    if (pass.length < 6) {
+      setFeedback("Senha muito curta (mín. 6).");
+      return;
+    }
+    if (pass !== pass2) {
+      setFeedback("As senhas não conferem.");
+      return;
+    }
+    doRegister(email, pass);
+  });
+
+  // Logout
+  elBtnLogout?.addEventListener("click", (e) => {
+    e.preventDefault();
+    clearToken();
+    updateAuthUI();
+    updateCreditsLabel();
+  });
+
+  // -----------------------------
+  // Compra (mock) — abre login se necessário
+  // -----------------------------
+  elBtnPurchase?.addEventListener("click", async () => {
+    if (!getToken()) {
+      setAuthTab('login');
+      showAuth();
+      return;
+    }
+    setFeedback("Processando compra...");
+    try {
+      const res = await fetch("/purchase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ package: 10 }),
+      });
+      if (res.status === 401) {
+        setAuthTab('login');
+        showAuth();
+        return;
+      }
+      const json = await res.json();
+      if (json.ok) {
+        setFeedback("Créditos adicionados (mock).");
+        await updateCreditsLabel();
+      } else {
+        setFeedback(json.error || "Falha na compra.");
+      }
+    } catch (_) {
+      setFeedback("Erro de rede.");
+    }
+  });
+
+  // -----------------------------
+  // Compressão de imagem (canvas) — igual
+  // -----------------------------
   if (!HTMLCanvasElement.prototype.toBlob) {
     HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
       const dataURL = this.toDataURL(type, quality).split(",")[1];
@@ -204,122 +341,106 @@
       canvas.height = h;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, w, h);
-      const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/jpeg", quality));
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob((b) => resolve(b), "image/jpeg", quality)
+      );
       if (!blob) return file;
       const name = file.name?.replace(/\.(png|jpeg|jpg|heic)$/i, "") || "image";
       return new File([blob], `${name}.jpg`, { type: "image/jpeg" });
-    } catch { return file; }
+    } catch {
+      return file;
+    }
   }
 
-  function bindAnalyze() {
-    $("#btn-text")?.addEventListener("click", () => elTextarea?.focus());
+  // -----------------------------
+  // Envio: /analyze_photo
+  // -----------------------------
+  elBtnPhoto?.addEventListener("click", () => elInputPhoto?.click());
 
-    elBtnPhoto?.addEventListener("click", () => elInputPhoto?.click());
+  elInputPhoto?.addEventListener("change", async () => {
+    if (!elInputPhoto.files || !elInputPhoto.files[0]) return;
 
-    elInputPhoto?.addEventListener("change", async () => {
-      if (!elInputPhoto.files || !elInputPhoto.files[0]) return;
+    setFeedback("Compactando imagem...");
+    const original = elInputPhoto.files[0];
+    const compressed = await compressImage(original, 1920, 1920, 0.7);
 
-      setFeedback("Compactando imagem...");
-      const original = elInputPhoto.files[0];
-      const compressed = await compressImage(original, 1920, 1920, 0.7);
+    const fd = new FormData();
+    fd.append("photo", compressed, compressed.name);
 
-      const fd = new FormData();
-      fd.append("photo", compressed, compressed.name);
+    setFeedback("Enviando para análise...");
+    try {
+      const res = await fetch("/analyze_photo", {
+        method: "POST",
+        headers: authHeaders(),
+        body: fd,
+      });
 
-      setFeedback("Enviando para análise...");
-      try {
-        const res = await fetch("/analyze_photo", { method: "POST", headers: authHeaders(), body: fd });
-
-        if (res.status === 402) {
-          await updateCreditsLabel();
-          const gated = await requireLoginIfNoCredits();
-          if (!gated) setFeedback("Sem créditos disponíveis.");
-          return;
-        }
-
-        const json = await res.json();
-        if (json.ok) { showAnalysis(json.analysis); setFeedback("Análise concluída."); }
-        else { setFeedback(json.error || "Falha na análise da foto."); }
-      } catch { setFeedback("Erro de rede ao enviar foto."); }
-      finally {
-        if (elInputPhoto) elInputPhoto.value = "";
+      if (res.status === 402) {
         await updateCreditsLabel();
+        const gated = await requireLoginIfNoCredits();
+        if (!gated) setFeedback("Sem créditos disponíveis.");
+        return;
       }
-    });
 
-    elBtnSubmitText?.addEventListener("click", async () => {
-      const text = (elTextarea?.value || "").trim();
-      if (!text) { setFeedback("Digite um texto para analisar."); return; }
+      const json = await res.json();
+      if (json.ok) {
+        showAnalysis(json.analysis);
+        setFeedback("Análise concluída.");
+      } else {
+        setFeedback(json.error || "Falha na análise da foto.");
+      }
+    } catch (_) {
+      setFeedback("Erro de rede ao enviar foto.");
+    } finally {
+      if (elInputPhoto) elInputPhoto.value = "";
+      await updateCreditsLabel();
+    }
+  });
 
-      setFeedback("Analisando texto...");
-      try {
-        const res = await fetch("/analyze_text", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ text }),
-        });
+  // -----------------------------
+  // Envio: /analyze_text
+  // -----------------------------
+  elBtnSubmitText?.addEventListener("click", async () => {
+    const text = (elTextarea?.value || "").trim();
+    if (!text) {
+      setFeedback("Digite um texto para analisar.");
+      return;
+    }
 
-        if (res.status === 402) {
-          await updateCreditsLabel();
-          const gated = await requireLoginIfNoCredits();
-          if (!gated) setFeedback("Sem créditos disponíveis.");
-          return;
-        }
+    setFeedback("Analisando texto...");
+    try {
+      const res = await fetch("/analyze_text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ text }),
+      });
 
-        const json = await res.json();
-        if (json.ok) { showAnalysis(json.analysis); setFeedback("Análise concluída."); }
-        else { setFeedback(json.error || "Falha na análise do texto."); }
-      } catch { setFeedback("Erro de rede ao enviar texto."); }
-      finally { await updateCreditsLabel(); }
-    });
-  }
+      if (res.status === 402) {
+        await updateCreditsLabel();
+        const gated = await requireLoginIfNoCredits();
+        if (!gated) setFeedback("Sem créditos disponíveis.");
+        return;
+      }
 
-  // ---------- Boot ----------
-  function cacheElements() {
-    elYear = $("#year");
-    elCredits = $("#credits-left");
-    elBtnOpenAuth = $("#btn-open-auth");
-    elBtnLogout = $("#btn-logout");
-    elBtnPurchase = $("#btn-purchase");
-    elUserLabel = $("#user-label");
-    elUserState = $("#user-state");
+      const json = await res.json();
+      if (json.ok) {
+        showAnalysis(json.analysis);
+        setFeedback("Análise concluída.");
+      } else {
+        setFeedback(json.error || "Falha na análise do texto.");
+      }
+    } catch (_) {
+      setFeedback("Erro de rede ao enviar texto.");
+    } finally {
+      await updateCreditsLabel();
+    }
+  });
 
-    elAuthEmail = $("#auth-email");
-    elAuthPassword = $("#auth-password");
-    elBtnLogin = $("#btn-login");
-    elBtnRegister = $("#btn-register");
-
-    // ⚠️ Há dois #feedback (um no modal, outro na página). O primeiro no DOM será usado.
-    // Para este momento, esse comportamento é suficiente.
-    elFeedback = $("#feedback");
-
-    elInputPhoto = $("#photo-input");
-    elBtnPhoto = $("#btn-photo");
-    elTextarea = $("#textcontent");
-    elBtnSubmitText = $("#btn-submit-text");
-
-    elOut = $("#analysis-output");
-    elOutSummary = $("#analysis-summary");
-    elOutScore = $("#analysis-score");
-    elOutTags = $("#analysis-tags");
-    elOutRecs = $("#analysis-recs");
-
-    if (elYear) elYear.textContent = new Date().getFullYear();
-  }
-
-  function start() {
-    cacheElements();
-    bindAuthEvents();
-    bindPurchase();
-    bindAnalyze();
+  // -----------------------------
+  // Boot
+  // -----------------------------
+  document.addEventListener("DOMContentLoaded", () => {
     updateAuthUI();
     updateCreditsLabel();
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", start);
-  } else {
-    // Em teoria, como o script tem defer, o DOM já estará pronto.
-    start();
-  }
+  });
 })();
