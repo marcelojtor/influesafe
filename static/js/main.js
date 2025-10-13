@@ -135,22 +135,50 @@
       const data = json.data || {};
       const s = data.session ?? "—";
       const u = data.user ?? "—";
-      if (elCredits) elCredits.textContent = `Sessão: ${s} | Usuário: ${u}`;
+
+      // ===== alteração cirúrgica: exibir Sessão como x/3 usando free_credits =====
+      const free = typeof data.free_credits === "number" ? data.free_credits : 3;
+      const sText =
+        typeof s === "number" ? `${s}/${free}` : "—";
+      const uText =
+        typeof u === "number" ? String(u) : "—";
+
+      if (elCredits) elCredits.textContent = `Sessão: ${sText} | Usuário: ${uText}`;
     } catch (_) {
       // silencioso
     }
   }
 
-  async function requireLoginIfNoCredits() {
+  // Retorna objeto para o chamador decidir mensagens/ações.
+  async function checkGateForCredits() {
     try {
       const res = await fetch("/gate/login", { headers: authHeaders() });
       const json = await res.json();
-      if (json?.ok && json.require_login) {
-        setAuthTab('login');
-        showAuth();
-        return true;
+      if (!json?.ok) return { gated: false, need_purchase: false, logged_in: false };
+
+      // ===== alteração cirúrgica: tratar need_purchase para logado sem créditos =====
+      if (json.require_login) {
+        return { gated: true, need_purchase: false, logged_in: !!json.logged_in };
       }
-    } catch (_) {}
+      if (json.need_purchase) {
+        return { gated: false, need_purchase: true, logged_in: true };
+      }
+      return { gated: false, need_purchase: false, logged_in: !!json.logged_in };
+    } catch (_) {
+      return { gated: false, need_purchase: false, logged_in: false };
+    }
+  }
+
+  async function requireLoginIfNoCredits() {
+    const res = await checkGateForCredits();
+    if (res.gated) {
+      setAuthTab('login');
+      showAuth();
+      return true;
+    }
+    if (res.need_purchase) {
+      setFeedback("Você está logado, mas sem créditos. Clique em “Comprar créditos”.");
+    }
     return false;
   }
 
@@ -197,11 +225,9 @@
       });
       const json = await res.json();
       if (json.ok && json.token) {
-        // Após criar conta: não forçar uso imediato — deixa usuário entrar conscientemente
-        // Porém, como já temos o token, tratamos como logado.
+        // Após criar conta: já tratar como logado.
         setToken(json.token);
         setFeedback("Conta criada com sucesso.");
-        // Retorna à aba de login? — aqui manteremos apenas fechar modal e atualizar header.
         hideAuth();
         updateAuthUI();
         await updateCreditsLabel();
@@ -236,7 +262,7 @@
     const email  = (elRegEmail?.value || "").trim().toLowerCase();
     const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
     const pass   = elRegPass?.value || "";
-    const pass2  = elRegPass2?.value || "";
+    const pass2  = (elRegPass2?.value || "");
 
     if (!email || !email2 || !pass || !pass2) {
       setFeedback("Preencha todos os campos.");
@@ -377,7 +403,7 @@
 
       if (res.status === 402) {
         await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits();
+        const gated = await requireLoginIfNoCredits(); // respeita need_purchase
         if (!gated) setFeedback("Sem créditos disponíveis.");
         return;
       }
@@ -417,7 +443,7 @@
 
       if (res.status === 402) {
         await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits();
+        const gated = await requireLoginIfNoCredits(); // respeita need_purchase
         if (!gated) setFeedback("Sem créditos disponíveis.");
         return;
       }
