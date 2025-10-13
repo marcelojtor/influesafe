@@ -7,7 +7,7 @@ import uuid
 import hashlib
 from datetime import datetime
 from functools import wraps
-from typing import Optional
+from typing import Optional, Tuple
 
 from flask import (
     Flask,
@@ -239,32 +239,57 @@ def health():
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
     session_id = _get_session_id()
+    # Se houver qualquer crédito (usuário ou sessão), não exigir login
     if _has_any_credit(user_id, session_id):
-        return jsonify({"ok": True, "require_login": False})
-    return jsonify({"ok": True, "require_login": True, "reason": "Sem créditos; faça login para comprar."})
+        return jsonify({"ok": True, "require_login": False, "logged_in": bool(user_id)})
+
+    # Sem créditos:
+    if user_id:
+        # Usuário logado sem créditos => não pedir login; sinalizar compra
+        return jsonify({"ok": True, "require_login": False, "logged_in": True, "need_purchase": True})
+    # Convidado sem créditos de sessão => aí sim pedir login
+    return jsonify({"ok": True, "require_login": True, "logged_in": False, "reason": "Sem créditos; faça login para comprar."})
 
 # ==========================================================
 # Status de créditos
 # ==========================================================
+def _ensure_session_created() -> Tuple[str, bool]:
+    """
+    Garante que exista sessão. Retorna (session_id, created_now).
+    """
+    sid = _get_session_id()
+    if sid:
+        return sid, False
+    sid = str(uuid.uuid4())
+    get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return sid, True
+
 @app.get("/credits_status")
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
     from db.models import db_cursor
-    session_id = _get_session_id()
+    # Garante sessão e cookie aqui (evita '—' no primeiro paint)
+    sid, created_now = _ensure_session_created()
+
     user_credits = None
     session_credits = None
     with db_cursor() as cur:
-        if session_id:
-            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
-            r = cur.fetchone()
-            if r:
-                session_credits = r["credits_temp_remaining"]
+        cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
+        r = cur.fetchone()
+        if r:
+            session_credits = r["credits_temp_remaining"]
         if user_id:
             cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
             u = cur.fetchone()
             if u:
                 user_credits = u["credits_remaining"]
-    return jsonify({"ok": True, "data": {"session": session_credits, "user": user_credits}})
+
+    payload = {"ok": True, "data": {"session": session_credits, "user": user_credits, "free_credits": FREE_CREDITS}}
+    if created_now:
+        resp = make_response(jsonify(payload))
+        _ensure_session_cookie(resp, sid)
+        return resp
+    return jsonify(payload)
 
 # ==========================================================
 # Auth
@@ -341,18 +366,23 @@ def user_profile(user_id: Optional[int]):
 # ==========================================================
 # Analyze
 # ==========================================================
-def _ensure_session() -> str:
+def _ensure_session() -> Tuple[str, bool]:
+    """
+    Garante sessão; retorna (session_id, created_now).
+    Importante para endpoints JSON conseguirem setar cookie quando a sessão é criada aqui.
+    """
     session_id = _get_session_id()
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
-    return session_id
+    if session_id:
+        return session_id, False
+    session_id = str(uuid.uuid4())
+    get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return session_id, True
 
 @app.post("/analyze_photo")
 @rate_limit
 @require_auth_maybe
 def analyze_photo(user_id: Optional[int]):
-    session_id = _ensure_session()
+    session_id, created_now = _ensure_session()
     file = request.files.get("file") or request.files.get("photo")
     if not file or not file.filename:
         return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
@@ -385,13 +415,17 @@ def analyze_photo(user_id: Optional[int]):
     tags = json.dumps(result.get("tags", []))
     score = int(result.get("score_risk", 0))
     record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
-    return jsonify({"ok": True, "analysis": result})
+
+    resp = make_response(jsonify({"ok": True, "analysis": result}))
+    if created_now:
+        _ensure_session_cookie(resp, session_id)
+    return resp
 
 @app.post("/analyze_text")
 @rate_limit
 @require_auth_maybe
 def analyze_text(user_id: Optional[int]):
-    session_id = _ensure_session()
+    session_id, created_now = _ensure_session()
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     if not text:
@@ -413,7 +447,11 @@ def analyze_text(user_id: Optional[int]):
     tags = json.dumps(result.get("tags", []))
     score = int(result.get("score_risk", 0))
     record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
-    return jsonify({"ok": True, "analysis": result})
+
+    resp = make_response(jsonify({"ok": True, "analysis": result}))
+    if created_now:
+        _ensure_session_cookie(resp, session_id)
+    return resp
 
 # ==========================================================
 # Pagamentos (mock)
