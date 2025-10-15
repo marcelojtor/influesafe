@@ -1,8 +1,8 @@
-# db/models.py
 # INFLUE — Estrutura simplificada de persistência
-# Suporte a SQLite (local) e Postgres (Neon) via DATABASE_URL.
-# Ajustes cirúrgicos: migrações leves para garantir credits_temp_remaining na tabela sessions
-# e backfill de valores nulos (sem afetar créditos dos usuários).
+# Suporte a SQLite e Postgres (Neon) via DATABASE_URL.
+# Mudanças chave:
+# - UPSERT ao criar sessão (Postgres: ON CONFLICT DO NOTHING; SQLite: INSERT OR IGNORE)
+# - Logs leves para diagnóstico de criação de sessão
 
 import os
 from datetime import datetime
@@ -49,7 +49,6 @@ else:
     Path(_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
     def get_connection() -> sqlite3.Connection:
-        # isolation_level=None => autocommit pragmático com commit/rollback manual no contextmanager
         conn = sqlite3.connect(_DB_PATH, timeout=30, isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
@@ -68,7 +67,7 @@ else:
             conn.close()
 
 # ==========================================================
-# DDL base
+# Inicialização / DDL
 # ==========================================================
 DDL_SQLITE = [
     """
@@ -160,57 +159,10 @@ DDL_PG = [
 
 DDL = DDL_PG if _IS_PG else DDL_SQLITE
 
-# ==========================================================
-# Migrações leves (sem perder dados)
-# ==========================================================
-def _column_exists_sqlite(table: str, column: str) -> bool:
-    with db_cursor() as cur:
-        cur.execute(f"PRAGMA table_info({table})")
-        cols = [r["name"] for r in cur.fetchall()]
-        return column in cols
-
-def _column_exists_pg(table: str, column: str) -> bool:
-    with db_cursor() as cur:
-        cur.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_name = %s AND column_name = %s
-            """,
-            (table, column),
-        )
-        return cur.fetchone() is not None
-
-def _ensure_sessions_credits_column(default_val: int = 3):
-    """
-    Garante que a coluna credits_temp_remaining exista e possua default.
-    Também faz backfill onde houver NULL.
-    """
-    if _IS_PG:
-        exists = _column_exists_pg("sessions", "credits_temp_remaining")
-        if not exists:
-            with db_cursor() as cur:
-                cur.execute("ALTER TABLE sessions ADD COLUMN credits_temp_remaining INTEGER")
-                cur.execute("ALTER TABLE sessions ALTER COLUMN credits_temp_remaining SET DEFAULT %s", (default_val,))
-        # Backfill de NULLs
-        with db_cursor() as cur:
-            cur.execute("UPDATE sessions SET credits_temp_remaining = %s WHERE credits_temp_remaining IS NULL", (default_val,))
-    else:
-        exists = _column_exists_sqlite("sessions", "credits_temp_remaining")
-        if not exists:
-            with db_cursor() as cur:
-                cur.execute("ALTER TABLE sessions ADD COLUMN credits_temp_remaining INTEGER DEFAULT 3")
-        # Backfill de NULLs
-        with db_cursor() as cur:
-            cur.execute("UPDATE sessions SET credits_temp_remaining = ? WHERE credits_temp_remaining IS NULL", (default_val,))
-
 def init_db():
-    # Cria tabelas base
     with db_cursor() as cur:
         for stmt in DDL:
             cur.execute(stmt)
-    # Migração leve: garantir coluna de créditos de sessão
-    _ensure_sessions_credits_column(default_val=3)
 
 # ==========================================================
 # Usuários
@@ -224,16 +176,17 @@ class User:
 
 def get_user_by_email(email: str):
     with db_cursor() as cur:
-        cur.execute(
-            "SELECT * FROM users WHERE email = %s" if _IS_PG else "SELECT * FROM users WHERE email = ?",
-            (email,),
-        )
+        cur.execute("SELECT * FROM users WHERE email = %s" if _IS_PG else "SELECT * FROM users WHERE email = ?", (email,))
         row = cur.fetchone()
         if row:
             return User(row["id"], row["email"], row["password_hash"], row["credits_remaining"])
         return None
 
 def create_user(email: str, password_hash: str, credits: int = 0) -> int:
+    """
+    Cria usuário com saldo 'credits' informado.
+    (No seu fluxo novo, vamos chamar com credits=3 a partir do app.py)
+    """
     with db_cursor() as cur:
         if _IS_PG:
             cur.execute(
@@ -241,13 +194,16 @@ def create_user(email: str, password_hash: str, credits: int = 0) -> int:
                 (email, password_hash, credits),
             )
             new_id = cur.fetchone()["id"]
+            print(f"[DB] create_user ok email={email} credits={credits}")
             return new_id
         else:
             cur.execute(
                 "INSERT INTO users (email, password_hash, credits_remaining) VALUES (?, ?, ?)",
                 (email, password_hash, credits),
             )
-            return cur.lastrowid
+            new_id = cur.lastrowid
+            print(f"[DB] create_user ok email={email} credits={credits}")
+            return new_id
 
 def consume_user_credit_atomic(user_id: int) -> bool:
     with db_cursor() as cur:
@@ -265,38 +221,51 @@ def consume_user_credit_atomic(user_id: int) -> bool:
         return True
 
 # ==========================================================
-# Sessões
+# Sessões (com UPSERT)
 # ==========================================================
 def get_or_create_session(session_id: str, ip_hash: str, ua_hash: str, free_credits: int):
+    """
+    Garante que a sessão exista. Usa UPSERT seguro para evitar corrida.
+    """
     with db_cursor() as cur:
-        cur.execute(
-            "SELECT session_id, credits_temp_remaining FROM sessions WHERE session_id = %s" if _IS_PG else
-            "SELECT session_id, credits_temp_remaining FROM sessions WHERE session_id = ?",
-            (session_id,),
-        )
-        row = cur.fetchone()
-        if row:
-            # Backfill de NULL em bases antigas
-            if row.get("credits_temp_remaining") is None:
-                cur.execute(
-                    "UPDATE sessions SET credits_temp_remaining = %s WHERE session_id = %s" if _IS_PG else
-                    "UPDATE sessions SET credits_temp_remaining = ? WHERE session_id = ?",
-                    (free_credits, session_id),
-                )
-            return session_id
-
-        cur.execute(
-            "INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (%s, %s, %s, %s)" if _IS_PG else
-            "INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)",
-            (session_id, ip_hash, ua_hash, free_credits),
-        )
-    return session_id
+        if _IS_PG:
+            # Postgres: UPSERT
+            cur.execute(
+                """
+                INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (session_id) DO NOTHING
+                """,
+                (session_id, ip_hash, ua_hash, free_credits),
+            )
+            # Conferir existência
+            cur.execute("SELECT session_id FROM sessions WHERE session_id = %s", (session_id,))
+            row = cur.fetchone()
+            if row:
+                print(f"[DB] session upsert ok sid={session_id}")
+                return session_id
+            else:
+                print(f"[DB][WARN] session not found after upsert sid={session_id}")
+                return session_id
+        else:
+            # SQLite: OR IGNORE
+            cur.execute(
+                "INSERT OR IGNORE INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)",
+                (session_id, ip_hash, ua_hash, free_credits),
+            )
+            cur.execute("SELECT session_id FROM sessions WHERE session_id = ?", (session_id,))
+            row = cur.fetchone()
+            if row:
+                print(f"[DB] session upsert ok sid={session_id}")
+                return session_id
+            else:
+                print(f"[DB][WARN] session not found after upsert sid={session_id}")
+                return session_id
 
 def consume_session_credit_atomic(session_id: str) -> bool:
     with db_cursor() as cur:
         cur.execute(
-            "SELECT credits_temp_remaining FROM sessions WHERE session_id = %s" if _IS_PG else
-            "SELECT credits_temp_remaining FROM sessions WHERE session_id = ?",
+            "SELECT credits_temp_remaining FROM sessions WHERE session_id = %s" if _IS_PG else "SELECT credits_temp_remaining FROM sessions WHERE session_id = ?",
             (session_id,),
         )
         row = cur.fetchone()
