@@ -28,7 +28,11 @@ from db.models import (
     record_analysis,
     get_user_by_email,
     create_user,
+    # usamos direto o cursor para purchases; para crédito usamos helper:
+    # (já existente no seu models.py)
 )
+from db.models import db_cursor  # para consultas diretas de purchases
+from db.models import add_credits_to_user  # crédito automático pós-pagamento
 
 # ------ Utils ------
 from utils.security import hash_ip, hash_ua, hash_password, verify_password
@@ -45,11 +49,16 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-influe")
 
 # Políticas / Operação
-FREE_CREDITS = int(os.environ.get("FREE_CREDITS", "0"))  # sessão desativada conforme regra nova
+# Sessão desativada para gratuidade: FREE_CREDITS=0 no Render (conforme combinado)
+FREE_CREDITS = int(os.environ.get("FREE_CREDITS", "0"))
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "4"))
 TEMP_RETENTION_DAYS = int(os.environ.get("TEMP_RETENTION_DAYS", "7"))
 RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "6"))
 RATE_LIMIT_MIN_INTERVAL_MS = int(os.environ.get("RATE_LIMIT_MIN_INTERVAL_MS", "1000"))
+
+# Pagamentos / Webhook
+PAGBANK_WEBHOOK_SECRET = os.environ.get("PAGBANK_WEBHOOK_SECRET", "").encode()  # pode estar vazio em dev
+PAGBANK_TOKEN = os.environ.get("PAGBANK_TOKEN", "")
 
 # Uploads
 BASE_DIR = os.path.dirname(__file__)
@@ -158,7 +167,6 @@ def _seed_admin_if_missing():
             credits=0
         )
         # dá muitos créditos
-        from db.models import db_cursor
         with db_cursor() as cur:
             cur.execute(_sql("UPDATE users SET credits_remaining = ? WHERE id = ?"), (999999, user_id))
         print("[BOOT] Usuário admin criado (admin@gmail.com).")
@@ -176,8 +184,7 @@ def __admin_ensure_schema():
     if token != os.environ.get("SETUP_TOKEN", ""):
         return jsonify({"ok": False, "error": "Forbidden"}), 403
     try:
-        init_db()  # cria/ajusta tabelas
-        from db.models import db_cursor
+        init_db()
         with db_cursor() as cur:
             cur.execute(_sql("SELECT 1"))
             cur.fetchone()
@@ -196,9 +203,6 @@ def _session_ensure_and_get_id() -> str:
     return session_id
 
 def _ensure_session_created() -> Tuple[str, bool]:
-    """
-    Garante que exista sessão. Retorna (session_id, created_now).
-    """
     sid = _get_session_id()
     if sid:
         return sid, False
@@ -207,26 +211,19 @@ def _ensure_session_created() -> Tuple[str, bool]:
     return sid, True
 
 def _ensure_session_persisted(sid: str) -> None:
-    """
-    Garante que a linha da sessão exista; se não existir, insere com FREE_CREDITS.
-    """
-    from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
         row = cur.fetchone()
         if not row:
             try:
                 cur.execute(
-                    _sql(
-                        "INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)"
-                    ),
+                    _sql("INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)"),
                     (sid, _ip_hash(), _ua_hash(), FREE_CREDITS),
                 )
             except Exception:
-                pass  # corrida: ok ignorar
+                pass  # corrida
 
 def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
-    from db.models import db_cursor
     with db_cursor() as cur:
         if user_id:
             cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
@@ -245,7 +242,7 @@ def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
 # ==========================================================
 @app.get("/")
 def home():
-    credits_left_placeholder = 0  # sessão não dá mais créditos
+    credits_left_placeholder = 0  # sessão não concede créditos
     resp = make_response(render_template("index.html", credits_left=credits_left_placeholder))
     if not _get_session_id():
         sid = str(uuid.uuid4())
@@ -267,12 +264,10 @@ def health():
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
-    # GARANTIR sessão e cookie aqui também
     sid, created_now = _ensure_session_created()
     _ensure_session_persisted(sid)
     has_cookie = bool(_get_session_id())
 
-    # Se houver qualquer crédito (usuário ou sessão), não exigir login
     if _has_any_credit(user_id, sid):
         payload = {"ok": True, "require_login": False, "logged_in": bool(user_id)}
         resp = make_response(jsonify(payload))
@@ -280,7 +275,6 @@ def gate_login(user_id: Optional[int]):
             _ensure_session_cookie(resp, sid)
         return resp
 
-    # Sem créditos:
     if user_id:
         payload = {"ok": True, "require_login": False, "logged_in": True, "need_purchase": True}
         resp = make_response(jsonify(payload))
@@ -300,8 +294,6 @@ def gate_login(user_id: Optional[int]):
 @app.get("/credits_status")
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
-    from db.models import db_cursor
-    # Garante sessão e cookie aqui (evita '—' no primeiro paint)
     sid, created_now = _ensure_session_created()
     _ensure_session_persisted(sid)
 
@@ -358,7 +350,6 @@ def auth_login():
     user = get_user_by_email(email)
     if not user:
         return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
-    from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(_sql("SELECT password_hash FROM users WHERE id = ?"), (user.id,))
         row = cur.fetchone()
@@ -378,7 +369,6 @@ def auth_login():
 def user_profile(user_id: Optional[int]):
     if not user_id:
         return jsonify({"ok": True, "data": {"logged_in": False, "history": []}})
-    from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(
             _sql("SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
@@ -494,7 +484,7 @@ def analyze_text(user_id: Optional[int]):
     return resp
 
 # ==========================================================
-# Pagamentos (mock)
+# Pagamentos (mock + webhook PagBank)
 # ==========================================================
 @app.post("/purchase")
 @require_auth_maybe
@@ -506,6 +496,118 @@ def purchase(user_id: Optional[int]):
     provider = get_payment_provider()
     checkout = provider.start_checkout(user_id=user_id, package=package)
     return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
+
+# --------- Webhook PagBank ---------
+def _read_header_any(*names: str) -> str:
+    # Render/WSGI podem normalizar maiúsculas; tentamos várias chaves
+    for n in names:
+        v = request.headers.get(n)
+        if v:
+            return v
+    return ""
+
+def _hmac_safe_compare(a: bytes, b: bytes) -> bool:
+    if len(a) != len(b):
+        return False
+    return hmac.compare_digest(a, b)
+
+def _verify_pagbank_signature(raw_body: bytes) -> bool:
+    """
+    Verificação HMAC simples:
+    assinatura = hex(HMAC_SHA256(PAGBANK_WEBHOOK_SECRET, raw_body))
+    Header aceitos: X-PagBank-Signature, X-Pagbank-Signature, X-Signature
+    """
+    if not PAGBANK_WEBHOOK_SECRET:
+        # Em dev, se não configurar o segredo, aceitamos (mas logamos)
+        print("[WEBHOOK][WARN] PAGBANK_WEBHOOK_SECRET não definido; aceitando para dev.")
+        return True
+
+    header_sig = _read_header_any("X-PagBank-Signature", "X-Pagbank-Signature", "X-Signature")
+    if not header_sig:
+        print("[WEBHOOK] Assinatura ausente.")
+        return False
+
+    try:
+        mac = hmac.new(PAGBANK_WEBHOOK_SECRET, raw_body, hashlib.sha256).hexdigest()
+    except Exception as e:
+        print(f"[WEBHOOK] Falha ao calcular HMAC: {e}")
+        return False
+    return _hmac_safe_compare(mac.encode(), header_sig.strip().encode())
+
+def _is_paid_status(s: str) -> bool:
+    if not s:
+        return False
+    s = s.upper()
+    # ajuste conforme a docs do PagBank
+    return s in ("PAID", "APPROVED", "AUTHORIZED", "CAPTURED", "SUCCEEDED")
+
+@app.post("/webhooks/pagbank")
+def webhook_pagbank():
+    """
+    Webhook idempotente:
+    - Verifica assinatura HMAC do corpo bruto.
+    - Identifica a compra por reference_id (provider_ref).
+    - Se status pagamento "pago" e ainda não marcado, grava 'paid' e credita +package.
+    - Responde 200 SEMPRE que processar (ou quando a assinatura for inválida, responde 400).
+    """
+    raw = request.get_data(cache=False, as_text=False)
+    if not _verify_pagbank_signature(raw):
+        return jsonify({"ok": False, "error": "signature_invalid"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    # Campos tolerantes (variantes comuns):
+    provider_ref = (payload.get("reference_id")
+                    or payload.get("referenceId")
+                    or payload.get("order_id")
+                    or payload.get("id")
+                    or "")
+    status = (payload.get("status") or "").upper()
+
+    if not provider_ref:
+        # Sem referência, não conseguimos mapear—confirmamos 200 para não loopar eternamente
+        print("[WEBHOOK] reference_id ausente; ignorando.")
+        return jsonify({"ok": True, "skipped": True})
+
+    with db_cursor() as cur:
+        # Busca a purchase pelo provider_ref
+        cur.execute(_sql("SELECT id, user_id, package, status FROM purchases WHERE provider_ref = ?"), (provider_ref,))
+        row = cur.fetchone()
+        if not row:
+            # Pode ser uma compra antiga/local. Respondemos ok para evitar reenvios sem fim.
+            print(f"[WEBHOOK] purchase não encontrada para provider_ref={provider_ref}")
+            return jsonify({"ok": True, "unknown_purchase": True})
+
+        purchase_id = row["id"]
+        user_id = row["user_id"]
+        package = int(row["package"] or 10)
+        current_status = (row["status"] or "").lower()
+
+        if _is_paid_status(status):
+            if current_status == "paid":
+                # Idempotência: já creditado
+                print(f"[WEBHOOK] purchase {purchase_id} já está paid; ignorando duplicata.")
+                return jsonify({"ok": True, "idempotent": True})
+            # Marca como pago e credita
+            cur.execute(_sql("UPDATE purchases SET status = ? WHERE id = ?"), ("paid", purchase_id))
+            try:
+                add_credits_to_user(user_id, package)
+            except Exception as e:
+                # Tentativa de rollback lógico: rebaixa status para pending se crédito falhar
+                print(f"[WEBHOOK][ERR] Falha ao creditar usuário {user_id}: {e}")
+                try:
+                    cur.execute(_sql("UPDATE purchases SET status = ? WHERE id = ?"), ("pending", purchase_id))
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": "credit_failed"}), 500
+
+            print(f"[WEBHOOK] Créditos +{package} aplicados ao user_id={user_id} (purchase_id={purchase_id}).")
+            return jsonify({"ok": True, "credited": package})
+        else:
+            # Não pago (pending/canceled/refunded etc.)
+            new_status = status.lower() or "pending"
+            if new_status != current_status:
+                cur.execute(_sql("UPDATE purchases SET status = ? WHERE id = ?"), (new_status, purchase_id))
+            return jsonify({"ok": True, "status": new_status})
 
 # ==========================================================
 # Servir temp (debug)
@@ -519,3 +621,36 @@ def serve_temp(session_id, fname):
 # ==========================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
+
+"""
+-----------------------------------------------------------
+COMO TESTAR O WEBHOOK AGORA (sem PagBank)
+-----------------------------------------------------------
+1) No Render → Environment:
+   - Defina PAGBANK_WEBHOOK_SECRET=teste123
+
+2) Faça um POST simulando o webhook:
+   Em um terminal local (ajuste a URL do seu serviço):
+
+   BODY='{"reference_id":"ORDER-XYZ-123","status":"PAID"}'
+   SIG=$(python3 - <<'PY'
+import hmac,hashlib,os,sys
+secret=b"teste123"
+body=b'{"reference_id":"ORDER-XYZ-123","status":"PAID"}'
+print(hmac.new(secret, body, hashlib.sha256).hexdigest())
+PY
+)
+
+   curl -i -X POST "https://influesafe.onrender.com/webhooks/pagbank" \
+     -H "Content-Type: application/json" \
+     -H "X-PagBank-Signature: $SIG" \
+     --data "$BODY"
+
+3) Antes de testar, crie uma linha em 'purchases' com provider_ref='ORDER-XYZ-123',
+   user_id=<um usuário real>, package=10, status='pending'.
+   (Isso já acontece naturalmente quando VOCÊ integrar o botão de compra para
+   criar o checkout no provider e gravar a purchase.)
+
+4) Se estiver 'pending', o webhook acima marca 'paid' e credita +10.
+   Ele é idempotente: se enviar de novo, não duplica crédito.
+"""
