@@ -4,7 +4,7 @@
  * - Modal de autenticação com modos: Entrar / Criar conta (com confirmações).
  * - 3 créditos de SESSÃO sem barreira; exigir login só ao esgotar ou ao comprar.
  * - Botões do modal: Entrar e Criar conta funcionais.
- * - Fluxo de análise (foto/texto), consumo de crédito e compra (mock).
+ * - Fluxo de análise (foto/texto), consumo de crédito e compra.
  */
 
 (function () {
@@ -22,7 +22,8 @@
   const elCredits = $("#credits-left");
   const elBtnOpenAuth = $("#btn-open-auth");
   const elBtnLogout = $("#btn-logout");
-  const elBtnPurchase = $("#btn-purchase");
+  const elBtnPurchase = $("#btn-purchase"); // botão legado (pode estar oculto no base.html)
+  const elBuyLink = $("#btn-buy-link");     // NOVO: link para /buy
   const elUserLabel = $("#user-label");
   const elUserState = $("#user-state");
 
@@ -136,7 +137,7 @@
       const s = data.session ?? "—";
       const u = data.user ?? "—";
 
-      // ===== alteração cirúrgica: exibir Sessão como x/3 usando free_credits =====
+      // Exibir Sessão como x/3 usando free_credits (se aplicável)
       const free = typeof data.free_credits === "number" ? data.free_credits : 3;
       const sText =
         typeof s === "number" ? `${s}/${free}` : "—";
@@ -156,7 +157,6 @@
       const json = await res.json();
       if (!json?.ok) return { gated: false, need_purchase: false, logged_in: false };
 
-      // ===== alteração cirúrgica: tratar need_purchase para logado sem créditos =====
       if (json.require_login) {
         return { gated: true, need_purchase: false, logged_in: !!json.logged_in };
       }
@@ -296,37 +296,22 @@
   });
 
   // -----------------------------
-  // Compra (mock) — abre login se necessário
+  // Compra — redireciona para /buy (verifica login)
   // -----------------------------
-  elBtnPurchase?.addEventListener("click", async () => {
+  async function handleBuyClick(ev) {
+    ev?.preventDefault?.();
     if (!getToken()) {
       setAuthTab('login');
       showAuth();
       return;
     }
-    setFeedback("Processando compra...");
-    try {
-      const res = await fetch("/purchase", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ package: 10 }),
-      });
-      if (res.status === 401) {
-        setAuthTab('login');
-        showAuth();
-        return;
-      }
-      const json = await res.json();
-      if (json.ok) {
-        setFeedback("Créditos adicionados (mock).");
-        await updateCreditsLabel();
-      } else {
-        setFeedback(json.error || "Falha na compra.");
-      }
-    } catch (_) {
-      setFeedback("Erro de rede.");
-    }
-  });
+    // logado: segue para página de compra
+    window.location.href = "/buy";
+  }
+
+  // Aplica aos dois elementos (legado e novo)
+  elBtnPurchase?.addEventListener("click", handleBuyClick);
+  elBuyLink?.addEventListener("click", handleBuyClick);
 
   // -----------------------------
   // Compressão de imagem (canvas) — igual
