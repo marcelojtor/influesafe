@@ -54,9 +54,14 @@
         </span>
 
         <!-- Botões de ação -->
-        <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos (mock nesta etapa)">
+        <!-- (1) Botão antigo mantido porém oculto, para não quebrar main.js atual -->
+        <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
           Comprar 10 créditos
         </button>
+        <!-- (2) Novo link direto para a página de compra -->
+        <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
+          Comprar 10 créditos
+        </a>
 
         <!-- Área de login/logout -->
         <button id="btn-open-auth" class="btn btn-ghost" type="button">Entrar / Criar conta</button>
