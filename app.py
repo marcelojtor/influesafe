@@ -261,6 +261,12 @@ def privacy():
 def health():
     return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
+# --- Página de compra ---
+@app.get("/buy")
+@require_auth_maybe
+def buy_page(user_id: Optional[int]):
+    return render_template("buy.html")
+
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
