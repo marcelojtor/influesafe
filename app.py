@@ -1,448 +1,662 @@
-/* INFLUE — Controller (mobile-first)
- * Objetivo:
- * - Home sempre acessível.
- * - Modal de autenticação com modos: Entrar / Criar conta (com confirmações).
- * - 3 créditos de SESSÃO sem barreira; exigir login só ao esgotar ou ao comprar.
- * - Botões do modal: Entrar e Criar conta funcionais.
- * - Fluxo de análise (foto/texto), consumo de crédito e compra.
- */
+from __future__ import annotations
 
-(function () {
-  "use strict";
+import os
+import hmac
+import json
+import uuid
+import hashlib
+from datetime import datetime
+from functools import wraps
+from typing import Optional, Tuple
 
-  // -----------------------------
-  // Shortcuts / elementos
-  // -----------------------------
-  const $ = (sel) => document.querySelector(sel);
+from flask import (
+    Flask,
+    render_template,
+    request,
+    jsonify,
+    send_from_directory,
+    make_response,
+)
+from werkzeug.utils import secure_filename
 
-  // Rodapé
-  const elYear = $("#year");
+# ------ DB init / schema helpers ------
+from db.models import (
+    init_db,
+    get_or_create_session,
+    consume_session_credit_atomic,
+    consume_user_credit_atomic,
+    record_analysis,
+    get_user_by_email,
+    create_user,
+    # usamos direto o cursor para purchases; para crédito usamos helper:
+    # (já existente no seu models.py)
+)
+from db.models import db_cursor  # para consultas diretas de purchases
+from db.models import add_credits_to_user  # crédito automático pós-pagamento
 
-  // Header (estado e créditos)
-  const elCredits = $("#credits-left");
-  const elBtnOpenAuth = $("#btn-open-auth");
-  const elBtnLogout = $("#btn-logout");
-  const elBtnPurchase = $("#btn-purchase");
-  const elUserLabel = $("#user-label");
-  const elUserState = $("#user-state");
+# ------ Utils ------
+from utils.security import hash_ip, hash_ua, hash_password, verify_password
+from utils.rate_limit import SimpleRateLimiter
 
-  // Modal (campos e botões — ENTRAR)
-  const elAuthEmail = $("#auth-email");
-  const elAuthPassword = $("#auth-password");
-  const formLogin = $("#form-login");
-  const elBtnLogin = $("#btn-login");
+# ------ Serviços ------
+from services.openai_client import OpenAIClient
+from payments import get_payment_provider  # garante public get_payment_provider
 
-  // Modal (campos e botões — CRIAR CONTA)
-  const formSignup = $("#form-signup");
-  const elRegEmail = $("#reg-email");
-  const elRegEmail2 = $("#reg-email2");
-  const elRegPass = $("#reg-pass");
-  const elRegPass2 = $("#reg-pass2");
-  const elBtnRegister = $("#btn-register");
+# ==========================================================
+# Config
+# ==========================================================
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-influe")
 
-  // Home / análise
-  const elFeedback = $("#feedback");
-  const elInputPhoto = $("#photo-input");
-  const elBtnPhoto = $("#btn-photo");
-  const elTextarea = $("#textcontent");
-  const elBtnSubmitText = $("#btn-submit-text");
+# Políticas / Operação
+# Sessão desativada para gratuidade: FREE_CREDITS=0 no Render (conforme combinado)
+FREE_CREDITS = int(os.environ.get("FREE_CREDITS", "0"))
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "4"))
+TEMP_RETENTION_DAYS = int(os.environ.get("TEMP_RETENTION_DAYS", "7"))
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "6"))
+RATE_LIMIT_MIN_INTERVAL_MS = int(os.environ.get("RATE_LIMIT_MIN_INTERVAL_MS", "1000"))
 
-  // Saída de análise
-  const elOut = $("#analysis-output");
-  const elOutSummary = $("#analysis-summary");
-  const elOutScore = $("#analysis-score");
-  const elOutTags = $("#analysis-tags");
-  const elOutRecs = $("#analysis-recs");
+# Pagamentos / Webhook
+PAGBANK_WEBHOOK_SECRET = os.environ.get("PAGBANK_WEBHOOK_SECRET", "").encode()  # pode estar vazio em dev
+PAGBANK_TOKEN = os.environ.get("PAGBANK_TOKEN", "")
 
-  // Modal controls fornecidos por base.html
-  const showAuth = window.__influe_show_auth__ || (() => {});
-  const hideAuth = window.__influe_hide_auth__ || (() => {});
-  const setAuthTab = window.__influe_set_auth_tab__ || (() => {});
+# Uploads
+BASE_DIR = os.path.dirname(__file__)
+STORAGE_DIR = os.path.join(BASE_DIR, "storage", "temp")
+os.makedirs(STORAGE_DIR, exist_ok=True)
 
-  // -----------------------------
-  // Utilidades
-  // -----------------------------
-  if (elYear) elYear.textContent = new Date().getFullYear();
+# Inicializa DB / cria tabelas
+try:
+    init_db()
+    print("[BOOT] DB inicializado.")
+except Exception as e:
+    print(f"[BOOT][WARN] init_db falhou: {e}")
 
-  function setFeedback(msg) {
-    if (elFeedback) elFeedback.textContent = msg || "";
-  }
+# IA client (stub por padrão)
+ai_client = OpenAIClient()
 
-  function showAnalysis(analysis) {
-    const score =
-      typeof analysis.score_risk === "number" ? analysis.score_risk : "—";
-    const tags = Array.isArray(analysis.tags)
-      ? analysis.tags.join(", ")
-      : "—";
-    const recs = Array.isArray(analysis.recommendations)
-      ? analysis.recommendations
-      : [];
+# Rate limiter simples
+rate_limiter = SimpleRateLimiter(
+    window_s=60,
+    max_requests=RATE_LIMIT_PER_MINUTE,
+    min_interval_s=RATE_LIMIT_MIN_INTERVAL_MS / 1000.0,
+)
 
-    if (elOutSummary) elOutSummary.textContent = analysis.summary || "Análise concluída.";
-    if (elOutScore) elOutScore.textContent = String(score);
-    if (elOutTags) elOutTags.textContent = tags;
+# ==========================================================
+# Compat SQLite x Postgres (para placeholders em logs locais)
+# ==========================================================
+_IS_PG = os.environ.get("DATABASE_URL", "").startswith(("postgresql://", "postgres://"))
+def _sql(q: str) -> str:
+    return q.replace("?", "%s") if _IS_PG else q
 
-    if (elOutRecs) {
-      elOutRecs.innerHTML = "";
-      recs.slice(0, 3).forEach((r) => {
-        const li = document.createElement("li");
-        li.textContent = r;
-        elOutRecs.appendChild(li);
-      });
-    }
-    if (elOut) elOut.style.display = "block";
-  }
+# ==========================================================
+# Helpers de sessão e auth
+# ==========================================================
+def _ip_hash() -> str:
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr) or ""
+    return hash_ip(ip)
 
-  // -----------------------------
-  // Auth helpers (token)
-  // -----------------------------
-  function getToken() {
-    return localStorage.getItem("influe_token") || null;
-  }
-  function setToken(token) {
-    if (token) localStorage.setItem("influe_token", token);
-  }
-  function clearToken() {
-    localStorage.removeItem("influe_token");
-  }
-  function authHeaders() {
-    const t = getToken();
-    return t ? { Authorization: "Bearer " + t } : {};
-  }
+def _ua_hash() -> str:
+    ua = (request.headers.get("User-Agent", "") or "") + "|" + (request.headers.get("Accept", "") or "")
+    return hash_ua(ua)
 
-  function setUserState(label, color = "#6aa8ff") {
-    if (elUserLabel) elUserLabel.textContent = label;
-    const circle = elUserState?.querySelector("circle");
-    if (circle) circle.setAttribute("fill", color);
-  }
+def _get_session_id() -> Optional[str]:
+    return request.cookies.get("influe_session")
 
-  function updateAuthUI() {
-    const logged = !!getToken();
-    if (elBtnOpenAuth) elBtnOpenAuth.style.display = logged ? "none" : "";
-    if (elBtnLogout) elBtnLogout.style.display = logged ? "" : "none";
-    if (logged) setUserState("Logado", "#00e676");
-    else setUserState("Convidado", "#6aa8ff");
-  }
+def _ensure_session_cookie(resp, session_id: str):
+    resp.set_cookie(
+        "influe_session",
+        session_id,
+        max_age=60 * 60 * 24 * 7,
+        httponly=True,
+        samesite="Lax",
+        secure=False if app.debug else True,
+    )
+    return resp
 
-  // -----------------------------
-  // Créditos (status) + Gate
-  // -----------------------------
-  async function updateCreditsLabel() {
-    try {
-      const res = await fetch("/credits_status", { headers: authHeaders() });
-      const json = await res.json();
-      if (!json?.ok) return;
-      const data = json.data || {};
-      const s = data.session ?? "—";
-      const u = data.user ?? "—";
+# --- Token HMAC simples (MVP) ---
+def _make_token(user_id: int) -> str:
+    secret = app.config["SECRET_KEY"].encode()
+    msg = str(user_id).encode()
+    sig = hmac.new(secret, msg, hashlib.sha256).hexdigest()
+    return f"{user_id}.{sig}"
 
-      // Exibir Sessão como x/free (quando fizer sentido)
-      const free = typeof data.free_credits === "number" ? data.free_credits : 0;
-      const sText = typeof s === "number" && free > 0 ? `${s}/${free}` : String(s);
-      const uText = typeof u === "number" ? String(u) : "—";
+def _parse_token(token: str) -> Optional[int]:
+    try:
+        user_str, sig = token.split(".", 1)
+        secret = app.config["SECRET_KEY"].encode()
+        exp = hmac.new(secret, user_str.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(exp, sig):
+            return int(user_str)
+    except Exception:
+        return None
+    return None
 
-      if (elCredits) elCredits.textContent = `Sessão: ${sText} | Usuário: ${uText}`;
-    } catch (_) {
-      // silencioso
-    }
-  }
+def require_auth_maybe(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        auth = request.headers.get("Authorization", "")
+        user_id = None
+        if auth.startswith("Bearer "):
+            maybe = auth.replace("Bearer ", "", 1).strip()
+            user_id = _parse_token(maybe)
+        return fn(user_id, *args, **kwargs)
+    return wrapper
 
-  // Retorna objeto para o chamador decidir mensagens/ações.
-  async function checkGateForCredits() {
-    try {
-      const res = await fetch("/gate/login", { headers: authHeaders() });
-      const json = await res.json();
-      if (!json?.ok) return { gated: false, need_purchase: false, logged_in: false };
+def rate_limit(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = request.headers.get("X-Forwarded-For", request.remote_addr) or "unknown"
+        if not rate_limiter.allow(key):
+            return jsonify({"ok": False, "error": "Muitas requisições. Tente novamente em instantes."}), 429
+        return fn(*args, **kwargs)
+    return wrapper
 
-      if (json.require_login) {
-        return { gated: true, need_purchase: false, logged_in: !!json.logged_in };
-      }
-      if (json.need_purchase) {
-        return { gated: false, need_purchase: true, logged_in: true };
-      }
-      return { gated: false, need_purchase: false, logged_in: !!json.logged_in };
-    } catch (_) {
-      return { gated: false, need_purchase: false, logged_in: false };
-    }
-  }
+# ==========================================================
+# Seed do ADMIN (admin@gmail.com / @123456)
+# ==========================================================
+def _seed_admin_if_missing():
+    try:
+        admin = get_user_by_email("admin@gmail.com")
+        if admin:
+            return
+        salt, hashed = hash_password("@123456")
+        user_id = create_user(
+            email="admin@gmail.com",
+            password_hash=f"{salt}${hashed}",
+            credits=0
+        )
+        # dá muitos créditos
+        with db_cursor() as cur:
+            cur.execute(_sql("UPDATE users SET credits_remaining = ? WHERE id = ?"), (999999, user_id))
+        print("[BOOT] Usuário admin criado (admin@gmail.com).")
+    except Exception as e:
+        print(f"[BOOT][WARN] Seed admin falhou: {e}")
 
-  async function requireLoginIfNoCredits() {
-    const res = await checkGateForCredits();
-    if (res.gated) {
-      setAuthTab('login');
-      showAuth();
-      return true;
-    }
-    if (res.need_purchase) {
-      setFeedback("Você está logado, mas sem créditos. Clique em “Comprar créditos”.");
-    }
-    return false;
-  }
+_seed_admin_if_missing()
 
-  // -----------------------------
-  // Validações simples
-  // -----------------------------
-  function isValidEmail(v) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-  }
+# ==========================================================
+# Rota admin para diagnosticar a conexão / criar schema
+# ==========================================================
+@app.get("/__admin/ensure_schema")
+def __admin_ensure_schema():
+    token = request.args.get("token")
+    if token != os.environ.get("SETUP_TOKEN", ""):
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+    try:
+        init_db()
+        with db_cursor() as cur:
+            cur.execute(_sql("SELECT 1"))
+            cur.fetchone()
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-  // -----------------------------
-  // Login / Registro (modal)
-  // -----------------------------
-  async function doLogin(email, password) {
-    setFeedback("Entrando...");
-    try {
-      const res = await fetch("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const json = await res.json();
-      if (json.ok && json.token) {
-        setToken(json.token);
-        hideAuth();
-        setFeedback("Login efetuado.");
-        updateAuthUI();
-        await updateCreditsLabel();
-      } else {
-        setFeedback(json.error || "Falha na autenticação.");
-      }
-    } catch (_) {
-      setFeedback("Erro de rede.");
-    }
-  }
+# ==========================================================
+# Helpers de sessão
+# ==========================================================
+def _session_ensure_and_get_id() -> str:
+    session_id = _get_session_id()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return session_id
 
-  async function doRegister(email, password) {
-    setFeedback("Criando conta...");
-    try {
-      const res = await fetch("/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const json = await res.json();
-      if (json.ok && json.token) {
-        setToken(json.token);
-        setFeedback("Conta criada com sucesso.");
-        hideAuth();
-        updateAuthUI();
-        await updateCreditsLabel();
-      } else {
-        setFeedback(json.error || "Falha ao criar conta.");
-      }
-    } catch (_) {
-      setFeedback("Erro de rede.");
-    }
-  }
+def _ensure_session_created() -> Tuple[str, bool]:
+    sid = _get_session_id()
+    if sid:
+        return sid, False
+    sid = str(uuid.uuid4())
+    get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return sid, True
 
-  // ENTRAR: submit
-  formLogin?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const email = (elAuthEmail?.value || "").trim().toLowerCase();
-    const password = elAuthPassword?.value || "";
-    if (!email || !password) {
-      setFeedback("Informe e-mail e senha.");
-      return;
-    }
-    if (!isValidEmail(email)) {
-      setFeedback("E-mail inválido.");
-      return;
-    }
-    doLogin(email, password);
-  });
+def _ensure_session_persisted(sid: str) -> None:
+    with db_cursor() as cur:
+        cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
+        row = cur.fetchone()
+        if not row:
+            try:
+                cur.execute(
+                    _sql("INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)"),
+                    (sid, _ip_hash(), _ua_hash(), FREE_CREDITS),
+                )
+            except Exception:
+                pass  # corrida
 
-  // CRIAR CONTA: submit (com confirmações)
-  formSignup?.addEventListener("submit", (e) => {
-    e.preventDefault();
+def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
+    with db_cursor() as cur:
+        if user_id:
+            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
+            row = cur.fetchone()
+            if row and (row["credits_remaining"] or 0) > 0:
+                return True
+        if session_id:
+            cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (session_id,))
+            row = cur.fetchone()
+            if row and (row["credits_temp_remaining"] or 0) > 0:
+                return True
+    return False
 
-    const email  = (elRegEmail?.value || "").trim().toLowerCase();
-    const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
-    const pass   = (elRegPass?.value || "");
-    const pass2  = (elRegPass2?.value || "");
+# ==========================================================
+# Web
+# ==========================================================
+@app.get("/")
+def home():
+    credits_left_placeholder = 0  # sessão não concede créditos
+    resp = make_response(render_template("index.html", credits_left=credits_left_placeholder))
+    if not _get_session_id():
+        sid = str(uuid.uuid4())
+        get_or_create_session(sid, _ip_hash(), _ua_hash(), FREE_CREDITS)
+        _ensure_session_cookie(resp, sid)
+    return resp
 
-    if (!email || !email2 || !pass || !pass2) {
-      setFeedback("Preencha todos os campos.");
-      return;
-    }
-    if (!isValidEmail(email)) {
-      setFeedback("E-mail inválido.");
-      return;
-    }
-    if (email !== email2) {
-      setFeedback("Os e-mails não conferem.");
-      return;
-    }
-    if (pass.length < 6) {
-      setFeedback("Senha muito curta (mín. 6).");
-      return;
-    }
-    if (pass !== pass2) {
-      setFeedback("As senhas não conferem.");
-      return;
-    }
-    doRegister(email, pass);
-  });
+@app.get("/privacy")
+def privacy():
+    return jsonify({
+        "ok": True,
+        "policy": f"Dados minimizados; imagens temporárias por até {TEMP_RETENTION_DAYS} dias; créditos por sessão/usuário."
+    })
 
-  // Logout
-  elBtnLogout?.addEventListener("click", (e) => {
-    e.preventDefault();
-    clearToken();
-    updateAuthUI();
-    updateCreditsLabel();
-  });
+@app.get("/health")
+def health():
+    return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
 
-  // -----------------------------
-  // Compra — redireciona para /buy
-  // -----------------------------
-  elBtnPurchase?.addEventListener("click", async () => {
-    if (!getToken()) {
-      setAuthTab('login');
-      showAuth();
-      return;
-    }
-    // Em vez de chamar /purchase direto, levamos o usuário para a página de compra
-    window.location.href = "/buy";
-  });
+# --- Página de compra ---
+@app.get("/buy")
+@require_auth_maybe
+def buy_page(user_id: Optional[int]):
+    return render_template("buy.html")
 
-  // -----------------------------
-  // Compressão de imagem (canvas)
-  // -----------------------------
-  if (!HTMLCanvasElement.prototype.toBlob) {
-    HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
-      const dataURL = this.toDataURL(type, quality).split(",")[1];
-      const binStr = atob(dataURL);
-      const len = binStr.length;
-      const arr = new Uint8Array(len);
-      for (let i = 0; i < len; i++) arr[i] = binStr.charCodeAt(i);
-      callback(new Blob([arr], { type: type || "image/jpeg" }));
-    };
-  }
+@app.get("/gate/login")
+@require_auth_maybe
+def gate_login(user_id: Optional[int]):
+    sid, created_now = _ensure_session_created()
+    _ensure_session_persisted(sid)
+    has_cookie = bool(_get_session_id())
 
-  function loadImage(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("Falha ao ler arquivo."));
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("Falha ao carregar imagem."));
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
-  }
+    if _has_any_credit(user_id, sid):
+        payload = {"ok": True, "require_login": False, "logged_in": bool(user_id)}
+        resp = make_response(jsonify(payload))
+        if created_now or not has_cookie:
+            _ensure_session_cookie(resp, sid)
+        return resp
 
-  async function compressImage(file, maxW = 1920, maxH = 1920, quality = 0.7) {
-    try {
-      const img = await loadImage(file);
-      const ratio = Math.min(maxW / img.width, maxH / img.height, 1);
-      const w = Math.max(1, Math.round(img.width * ratio));
-      const h = Math.max(1, Math.round(img.height * ratio));
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, w, h);
-      const blob = await new Promise((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/jpeg", quality)
-      );
-      if (!blob) return file;
-      const name = file.name?.replace(/\.(png|jpeg|jpg|heic)$/i, "") || "image";
-      return new File([blob], `${name}.jpg`, { type: "image/jpeg" });
-    } catch {
-      return file;
-    }
-  }
+    if user_id:
+        payload = {"ok": True, "require_login": False, "logged_in": True, "need_purchase": True}
+        resp = make_response(jsonify(payload))
+        if created_now or not has_cookie:
+            _ensure_session_cookie(resp, sid)
+        return resp
 
-  // -----------------------------
-  // Envio: /analyze_photo
-  // -----------------------------
-  elBtnPhoto?.addEventListener("click", () => elInputPhoto?.click());
+    payload = {"ok": True, "require_login": True, "logged_in": False, "reason": "Sem créditos; faça login para comprar."}
+    resp = make_response(jsonify(payload))
+    if created_now or not has_cookie:
+        _ensure_session_cookie(resp, sid)
+    return resp
 
-  elInputPhoto?.addEventListener("change", async () => {
-    if (!elInputPhoto.files || !elInputPhoto.files[0]) return;
+# ==========================================================
+# Status de créditos
+# ==========================================================
+@app.get("/credits_status")
+@require_auth_maybe
+def credits_status(user_id: Optional[int]):
+    sid, created_now = _ensure_session_created()
+    _ensure_session_persisted(sid)
 
-    setFeedback("Compactando imagem...");
-    const original = elInputPhoto.files[0];
-    const compressed = await compressImage(original, 1920, 1920, 0.7);
+    user_credits = None
+    session_credits = None
+    with db_cursor() as cur:
+        cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
+        r = cur.fetchone()
+        if r:
+            raw = r["credits_temp_remaining"]
+            if raw is None:
+                cur.execute(_sql("UPDATE sessions SET credits_temp_remaining = ? WHERE session_id = ?"),
+                            (FREE_CREDITS, sid))
+                session_credits = FREE_CREDITS
+            else:
+                session_credits = raw
+        if user_id:
+            cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
+            u = cur.fetchone()
+            if u:
+                user_credits = u["credits_remaining"]
 
-    const fd = new FormData();
-    fd.append("photo", compressed, compressed.name);
+    payload = {"ok": True, "data": {"session": session_credits, "user": user_credits, "free_credits": FREE_CREDITS}}
+    resp = make_response(jsonify(payload))
+    if created_now or not _get_session_id():
+        _ensure_session_cookie(resp, sid)
+    return resp
 
-    setFeedback("Enviando para análise...");
-    try {
-      const res = await fetch("/analyze_photo", {
-        method: "POST",
-        headers: authHeaders(),
-        body: fd,
-      });
+# ==========================================================
+# Auth
+# ==========================================================
+@app.post("/auth/register")
+def auth_register():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or not password:
+        return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
+    if get_user_by_email(email):
+        return jsonify({"ok": False, "error": "Email já cadastrado."}), 409
+    salt, hashed = hash_password(password)
+    # Regra nova: 3 créditos próprios no cadastro
+    user_id = create_user(email=email, password_hash=f"{salt}${hashed}", credits=3)
+    token = _make_token(user_id)
+    return jsonify({"ok": True, "token": token, "user_id": user_id})
 
-      if (res.status === 402) {
-        await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits();
-        if (!gated) setFeedback("Sem créditos disponíveis.");
-        return;
-      }
+@app.post("/auth/login")
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = (data.get("password") or "")
+    if not email or not password:
+        return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
+    user = get_user_by_email(email)
+    if not user:
+        return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+    with db_cursor() as cur:
+        cur.execute(_sql("SELECT password_hash FROM users WHERE id = ?"), (user.id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+        try:
+            salt, stored_hex = row["password_hash"].split("$", 1)
+        except Exception:
+            return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+    if not verify_password(password, salt, stored_hex):
+        return jsonify({"ok": False, "error": "Credenciais inválidas."}), 401
+    token = _make_token(user.id)
+    return jsonify({"ok": True, "token": token, "user_id": user.id})
 
-      const json = await res.json();
-      if (json.ok) {
-        showAnalysis(json.analysis);
-        setFeedback("Análise concluída.");
-      } else {
-        setFeedback(json.error || "Falha na análise da foto.");
-      }
-    } catch (_) {
-      setFeedback("Erro de rede ao enviar foto.");
-    } finally {
-      if (elInputPhoto) elInputPhoto.value = "";
-      await updateCreditsLabel();
-    }
-  });
+@app.get("/user/profile")
+@require_auth_maybe
+def user_profile(user_id: Optional[int]):
+    if not user_id:
+        return jsonify({"ok": True, "data": {"logged_in": False, "history": []}})
+    with db_cursor() as cur:
+        cur.execute(
+            _sql("SELECT id, type, score_risk, tags, created_at FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"),
+            (user_id,),
+        )
+        rows = cur.fetchall()
+        history = []
+        for r in rows:
+            try:
+                tags = json.loads(r["tags"]) if r["tags"] else []
+            except Exception:
+                tags = []
+            history.append({
+                "id": r["id"],
+                "type": r["type"],
+                "score_risk": r["score_risk"],
+                "tags": tags,
+                "created_at": r["created_at"],
+            })
+        cur.execute(_sql("SELECT credits_remaining FROM users WHERE id = ?"), (user_id,))
+        uc = cur.fetchone()
+        credits_remaining = uc["credits_remaining"] if uc else 0
+    return jsonify({"ok": True, "data": {"logged_in": True, "credits_remaining": credits_remaining, "history": history}})
 
-  // -----------------------------
-  // Envio: /analyze_text
-  // -----------------------------
-  elBtnSubmitText?.addEventListener("click", async () => {
-    const text = (elTextarea?.value || "").trim();
-    if (!text) {
-      setFeedback("Digite um texto para analisar.");
-      return;
-    }
+# ==========================================================
+# Analyze
+# ==========================================================
+def _ensure_session() -> Tuple[str, bool]:
+    """
+    Garante sessão; retorna (session_id, created_now).
+    Importante para endpoints JSON conseguirem setar cookie quando a sessão é criada aqui.
+    """
+    session_id = _get_session_id()
+    if session_id:
+        return session_id, False
+    session_id = str(uuid.uuid4())
+    get_or_create_session(session_id, _ip_hash(), _ua_hash(), FREE_CREDITS)
+    return session_id, True
 
-    setFeedback("Analisando texto...");
-    try {
-      const res = await fetch("/analyze_text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ text }),
-      });
+@app.post("/analyze_photo")
+@rate_limit
+@require_auth_maybe
+def analyze_photo(user_id: Optional[int]):
+    session_id, created_now = _ensure_session()
+    file = request.files.get("file") or request.files.get("photo")
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
+    filename = secure_filename(file.filename.lower())
+    if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
+        return jsonify({"ok": False, "error": "Formato inválido. Use JPG/PNG."}), 400
+    file.seek(0, os.SEEK_END)
+    size_mb = file.tell() / (1024 * 1024)
+    file.seek(0)
+    if size_mb > MAX_UPLOAD_MB:
+        return jsonify({"ok": False, "error": f"Arquivo excede {MAX_UPLOAD_MB}MB."}), 400
+    session_dir = os.path.join(STORAGE_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    save_path = os.path.join(session_dir, filename)
+    file.save(save_path)
 
-      if (res.status === 402) {
-        await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits();
-        if (!gated) setFeedback("Sem créditos disponíveis.");
-        return;
-      }
+    ok = False
+    if user_id:
+        ok = consume_user_credit_atomic(user_id)
+    if not ok:
+        ok = consume_session_credit_atomic(session_id)
+    if not ok:
+        return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
 
-      const json = await res.json();
-      if (json.ok) {
-        showAnalysis(json.analysis);
-        setFeedback("Análise concluída.");
-      } else {
-        setFeedback(json.error || "Falha na análise do texto.");
-      }
-    } catch (_) {
-      setFeedback("Erro de rede ao enviar texto.");
-    } finally {
-      await updateCreditsLabel();
-    }
-  });
+    result = ai_client.analyze_image(save_path)
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
 
-  // -----------------------------
-  // Boot
-  // -----------------------------
-  document.addEventListener("DOMContentLoaded", () => {
-    updateAuthUI();
-    updateCreditsLabel();
-  });
-})();
+    meta = json.dumps({"filename": filename})
+    tags = json.dumps(result.get("tags", []))
+    score = int(result.get("score_risk", 0))
+    record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
+
+    resp = make_response(jsonify({"ok": True, "analysis": result}))
+    if created_now:
+        _ensure_session_cookie(resp, session_id)
+    return resp
+
+@app.post("/analyze_text")
+@rate_limit
+@require_auth_maybe
+def analyze_text(user_id: Optional[int]):
+    session_id, created_now = _ensure_session()
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "Texto vazio."}), 400
+
+    ok = False
+    if user_id:
+        ok = consume_user_credit_atomic(user_id)
+    if not ok:
+        ok = consume_session_credit_atomic(session_id)
+    if not ok:
+        return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
+
+    result = ai_client.analyze_text(text)
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": "Falha na análise de IA."}), 502
+
+    meta = json.dumps({"chars": len(text)})
+    tags = json.dumps(result.get("tags", []))
+    score = int(result.get("score_risk", 0))
+    record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
+
+    resp = make_response(jsonify({"ok": True, "analysis": result}))
+    if created_now:
+        _ensure_session_cookie(resp, session_id)
+    return resp
+
+# ==========================================================
+# Pagamentos (mock + webhook PagBank)
+# ==========================================================
+@app.post("/purchase")
+@require_auth_maybe
+def purchase(user_id: Optional[int]):
+    if not user_id:
+        return jsonify({"ok": False, "error": "É necessário login para comprar créditos."}), 401
+    data = request.get_json(silent=True) or {}
+    package = int(data.get("package") or 10)
+    provider = get_payment_provider()
+    checkout = provider.start_checkout(user_id=user_id, package=package)
+    return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
+
+# --------- Webhook PagBank ---------
+def _read_header_any(*names: str) -> str:
+    # Render/WSGI podem normalizar maiúsculas; tentamos várias chaves
+    for n in names:
+        v = request.headers.get(n)
+        if v:
+            return v
+    return ""
+
+def _hmac_safe_compare(a: bytes, b: bytes) -> bool:
+    if len(a) != len(b):
+        return False
+    return hmac.compare_digest(a, b)
+
+def _verify_pagbank_signature(raw_body: bytes) -> bool:
+    """
+    Verificação HMAC simples:
+    assinatura = hex(HMAC_SHA256(PAGBANK_WEBHOOK_SECRET, raw_body))
+    Header aceitos: X-PagBank-Signature, X-Pagbank-Signature, X-Signature
+    """
+    if not PAGBANK_WEBHOOK_SECRET:
+        # Em dev, se não configurar o segredo, aceitamos (mas logamos)
+        print("[WEBHOOK][WARN] PAGBANK_WEBHOOK_SECRET não definido; aceitando para dev.")
+        return True
+
+    header_sig = _read_header_any("X-PagBank-Signature", "X-Pagbank-Signature", "X-Signature")
+    if not header_sig:
+        print("[WEBHOOK] Assinatura ausente.")
+        return False
+
+    try:
+        mac = hmac.new(PAGBANK_WEBHOOK_SECRET, raw_body, hashlib.sha256).hexdigest()
+    except Exception as e:
+        print(f"[WEBHOOK] Falha ao calcular HMAC: {e}")
+        return False
+    return _hmac_safe_compare(mac.encode(), header_sig.strip().encode())
+
+def _is_paid_status(s: str) -> bool:
+    if not s:
+        return False
+    s = s.upper()
+    # ajuste conforme a docs do PagBank
+    return s in ("PAID", "APPROVED", "AUTHORIZED", "CAPTURED", "SUCCEEDED")
+
+@app.post("/webhooks/pagbank")
+def webhook_pagbank():
+    """
+    Webhook idempotente:
+    - Verifica assinatura HMAC do corpo bruto.
+    - Identifica a compra por reference_id (provider_ref).
+    - Se status pagamento "pago" e ainda não marcado, grava 'paid' e credita +package.
+    - Responde 200 SEMPRE que processar (ou quando a assinatura for inválida, responde 400).
+    """
+    raw = request.get_data(cache=False, as_text=False)
+    if not _verify_pagbank_signature(raw):
+        return jsonify({"ok": False, "error": "signature_invalid"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    # Campos tolerantes (variantes comuns):
+    provider_ref = (payload.get("reference_id")
+                    or payload.get("referenceId")
+                    or payload.get("order_id")
+                    or payload.get("id")
+                    or "")
+    status = (payload.get("status") or "").upper()
+
+    if not provider_ref:
+        # Sem referência, não conseguimos mapear—confirmamos 200 para não loopar eternamente
+        print("[WEBHOOK] reference_id ausente; ignorando.")
+        return jsonify({"ok": True, "skipped": True})
+
+    with db_cursor() as cur:
+        # Busca a purchase pelo provider_ref
+        cur.execute(_sql("SELECT id, user_id, package, status FROM purchases WHERE provider_ref = ?"), (provider_ref,))
+        row = cur.fetchone()
+        if not row:
+            # Pode ser uma compra antiga/local. Respondemos ok para evitar reenvios sem fim.
+            print(f"[WEBHOOK] purchase não encontrada para provider_ref={provider_ref}")
+            return jsonify({"ok": True, "unknown_purchase": True})
+
+        purchase_id = row["id"]
+        user_id = row["user_id"]
+        package = int(row["package"] or 10)
+        current_status = (row["status"] or "").lower()
+
+        if _is_paid_status(status):
+            if current_status == "paid":
+                # Idempotência: já creditado
+                print(f"[WEBHOOK] purchase {purchase_id} já está paid; ignorando duplicata.")
+                return jsonify({"ok": True, "idempotent": True})
+            # Marca como pago e credita
+            cur.execute(_sql("UPDATE purchases SET status = ? WHERE id = ?"), ("paid", purchase_id))
+            try:
+                add_credits_to_user(user_id, package)
+            except Exception as e:
+                # Tentativa de rollback lógico: rebaixa status para pending se crédito falhar
+                print(f"[WEBHOOK][ERR] Falha ao creditar usuário {user_id}: {e}")
+                try:
+                    cur.execute(_sql("UPDATE purchases SET status = ? WHERE id = ?"), ("pending", purchase_id))
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": "credit_failed"}), 500
+
+            print(f"[WEBHOOK] Créditos +{package} aplicados ao user_id={user_id} (purchase_id={purchase_id}).")
+            return jsonify({"ok": True, "credited": package})
+        else:
+            # Não pago (pending/canceled/refunded etc.)
+            new_status = status.lower() or "pending"
+            if new_status != current_status:
+                cur.execute(_sql("UPDATE purchases SET status = ? WHERE id = ?"), (new_status, purchase_id))
+            return jsonify({"ok": True, "status": new_status})
+
+# ==========================================================
+# Servir temp (debug)
+# ==========================================================
+@app.get("/storage/temp/<session_id>/<path:fname>")
+def serve_temp(session_id, fname):
+    return send_from_directory(os.path.join(STORAGE_DIR, session_id), fname)
+
+# ==========================================================
+# Boot local
+# ==========================================================
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+
+"""
+-----------------------------------------------------------
+COMO TESTAR O WEBHOOK AGORA (sem PagBank)
+-----------------------------------------------------------
+1) No Render → Environment:
+   - Defina PAGBANK_WEBHOOK_SECRET=teste123
+
+2) Faça um POST simulando o webhook:
+   Em um terminal local (ajuste a URL do seu serviço):
+
+   BODY='{"reference_id":"ORDER-XYZ-123","status":"PAID"}'
+   SIG=$(python3 - <<'PY'
+import hmac,hashlib,os,sys
+secret=b"teste123"
+body=b'{"reference_id":"ORDER-XYZ-123","status":"PAID"}'
+print(hmac.new(secret, body, hashlib.sha256).hexdigest())
+PY
+)
+
+   curl -i -X POST "https://influesafe.onrender.com/webhooks/pagbank" \
+     -H "Content-Type: application/json" \
+     -H "X-PagBank-Signature: $SIG" \
+     --data "$BODY"
+
+3) Antes de testar, crie uma linha em 'purchases' com provider_ref='ORDER-XYZ-123',
+   user_id=<um usuário real>, package=10, status='pending'.
+   (Isso já acontece naturalmente quando VOCÊ integrar o botão de compra para
+   criar o checkout no provider e gravar a purchase.)
+
+4) Se estiver 'pending', o webhook acima marca 'paid' e credita +10.
+   Ele é idempotente: se enviar de novo, não duplica crédito.
+"""
