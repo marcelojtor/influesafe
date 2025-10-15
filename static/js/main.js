@@ -22,8 +22,7 @@
   const elCredits = $("#credits-left");
   const elBtnOpenAuth = $("#btn-open-auth");
   const elBtnLogout = $("#btn-logout");
-  const elBtnPurchase = $("#btn-purchase"); // botão legado (pode estar oculto no base.html)
-  const elBuyLink = $("#btn-buy-link");     // NOVO: link para /buy
+  const elBtnPurchase = $("#btn-purchase");
   const elUserLabel = $("#user-label");
   const elUserState = $("#user-state");
 
@@ -137,12 +136,10 @@
       const s = data.session ?? "—";
       const u = data.user ?? "—";
 
-      // Exibir Sessão como x/3 usando free_credits (se aplicável)
-      const free = typeof data.free_credits === "number" ? data.free_credits : 3;
-      const sText =
-        typeof s === "number" ? `${s}/${free}` : "—";
-      const uText =
-        typeof u === "number" ? String(u) : "—";
+      // Exibir Sessão como x/free (quando fizer sentido)
+      const free = typeof data.free_credits === "number" ? data.free_credits : 0;
+      const sText = typeof s === "number" && free > 0 ? `${s}/${free}` : String(s);
+      const uText = typeof u === "number" ? String(u) : "—";
 
       if (elCredits) elCredits.textContent = `Sessão: ${sText} | Usuário: ${uText}`;
     } catch (_) {
@@ -225,7 +222,6 @@
       });
       const json = await res.json();
       if (json.ok && json.token) {
-        // Após criar conta: já tratar como logado.
         setToken(json.token);
         setFeedback("Conta criada com sucesso.");
         hideAuth();
@@ -261,7 +257,7 @@
 
     const email  = (elRegEmail?.value || "").trim().toLowerCase();
     const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
-    const pass   = elRegPass?.value || "";
+    const pass   = (elRegPass?.value || "");
     const pass2  = (elRegPass2?.value || "");
 
     if (!email || !email2 || !pass || !pass2) {
@@ -296,25 +292,20 @@
   });
 
   // -----------------------------
-  // Compra — redireciona para /buy (verifica login)
+  // Compra — redireciona para /buy
   // -----------------------------
-  async function handleBuyClick(ev) {
-    ev?.preventDefault?.();
+  elBtnPurchase?.addEventListener("click", async () => {
     if (!getToken()) {
       setAuthTab('login');
       showAuth();
       return;
     }
-    // logado: segue para página de compra
+    // Em vez de chamar /purchase direto, levamos o usuário para a página de compra
     window.location.href = "/buy";
-  }
-
-  // Aplica aos dois elementos (legado e novo)
-  elBtnPurchase?.addEventListener("click", handleBuyClick);
-  elBuyLink?.addEventListener("click", handleBuyClick);
+  });
 
   // -----------------------------
-  // Compressão de imagem (canvas) — igual
+  // Compressão de imagem (canvas)
   // -----------------------------
   if (!HTMLCanvasElement.prototype.toBlob) {
     HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
@@ -388,7 +379,7 @@
 
       if (res.status === 402) {
         await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits(); // respeita need_purchase
+        const gated = await requireLoginIfNoCredits();
         if (!gated) setFeedback("Sem créditos disponíveis.");
         return;
       }
@@ -428,7 +419,7 @@
 
       if (res.status === 402) {
         await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits(); // respeita need_purchase
+        const gated = await requireLoginIfNoCredits();
         if (!gated) setFeedback("Sem créditos disponíveis.");
         return;
       }
