@@ -18,7 +18,7 @@ from flask import (
     make_response,
 )
 from werkzeug.utils import secure_filename
-from werkzeug.middleware.proxy_fix import ProxyFix  # [NEW] respeitar HTTPS atrás do proxy
+from werkzeug.middleware.proxy_fix import ProxyFix  # respeitar HTTPS atrás do proxy
 
 # ------ DB init / schema helpers ------
 from db.models import (
@@ -45,7 +45,7 @@ from payments import get_payment_provider  # garante public get_payment_provider
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-influe")
 
-# [NEW] Faz o Flask confiar nos headers do proxy do Render (HTTPS/host)
+# Faz o Flask confiar nos headers do proxy do Render (HTTPS/host)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Políticas / Operação
@@ -99,19 +99,18 @@ def _get_session_id() -> Optional[str]:
     return request.cookies.get("influe_session")
 
 def _is_https_request() -> bool:
-    # Render/Proxy: confia em X-Forwarded-Proto; ProxyFix já ajusta request.is_secure
+    # ProxyFix já ajusta request.is_secure; reforço com X-Forwarded-Proto
     xfp = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
     return bool(request.is_secure or xfp == "https")
 
 def _ensure_session_cookie(resp, session_id: str):
-    # [CHANGED] 'secure' dinâmico conforme HTTPS real atrás do proxy + path="/"
     resp.set_cookie(
         "influe_session",
         session_id,
         max_age=60 * 60 * 24 * 7,
         httponly=True,
         samesite="Lax",
-        secure=_is_https_request(),
+        secure=_is_https_request(),   # dinâmico
         path="/",
     )
     return resp
@@ -188,7 +187,6 @@ def __admin_ensure_schema():
         return jsonify({"ok": False, "error": "Forbidden"}), 403
     try:
         init_db()  # cria/ajusta tabelas
-        # pequeno teste de leitura simples
         from db.models import db_cursor
         with db_cursor() as cur:
             cur.execute(_sql("SELECT 1"))
@@ -208,9 +206,7 @@ def _session_ensure_and_get_id() -> str:
     return session_id
 
 def _ensure_session_created() -> Tuple[str, bool]:
-    """
-    Garante que exista sessão. Retorna (session_id, created_now).
-    """
+    """Garante que exista sessão. Retorna (session_id, created_now)."""
     sid = _get_session_id()
     if sid:
         return sid, False
@@ -219,26 +215,19 @@ def _ensure_session_created() -> Tuple[str, bool]:
     return sid, True
 
 def _ensure_session_persisted(sid: str) -> None:
-    """
-    Garante que a linha da sessão exista; se não existir, insere com FREE_CREDITS.
-    Também serve para bases antigas que possam não ter persistido a sessão.
-    """
+    """Garante que a linha da sessão exista; se não existir, insere com FREE_CREDITS."""
     from db.models import db_cursor
     with db_cursor() as cur:
         cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
         row = cur.fetchone()
         if not row:
-            # insere de forma idempotente
             try:
                 cur.execute(
-                    _sql(
-                        "INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)"
-                    ),
+                    _sql("INSERT INTO sessions (session_id, ip_hash, ua_hash, credits_temp_remaining) VALUES (?, ?, ?, ?)"),
                     (sid, _ip_hash(), _ua_hash(), FREE_CREDITS),
                 )
             except Exception:
-                # pode falhar por corrida; ignorar se já existir
-                pass
+                pass  # corrida: sessão já criada
 
 def _has_any_credit(user_id: Optional[int], session_id: Optional[str]) -> bool:
     from db.models import db_cursor
@@ -282,12 +271,10 @@ def health():
 @app.get("/gate/login")
 @require_auth_maybe
 def gate_login(user_id: Optional[int]):
-    # GARANTIR sessão e cookie aqui também
     sid, created_now = _ensure_session_created()
     _ensure_session_persisted(sid)
     has_cookie = bool(_get_session_id())
 
-    # Se houver qualquer crédito (usuário ou sessão), não exigir login
     if _has_any_credit(user_id, sid):
         payload = {"ok": True, "require_login": False, "logged_in": bool(user_id)}
         resp = make_response(jsonify(payload))
@@ -295,7 +282,6 @@ def gate_login(user_id: Optional[int]):
             _ensure_session_cookie(resp, sid)
         return resp
 
-    # Sem créditos:
     if user_id:
         payload = {"ok": True, "require_login": False, "logged_in": True, "need_purchase": True}
         resp = make_response(jsonify(payload))
@@ -316,7 +302,6 @@ def gate_login(user_id: Optional[int]):
 @require_auth_maybe
 def credits_status(user_id: Optional[int]):
     from db.models import db_cursor
-    # Garante sessão e cookie aqui (evita '—' no primeiro paint)
     sid, created_now = _ensure_session_created()
     _ensure_session_persisted(sid)
 
@@ -326,7 +311,6 @@ def credits_status(user_id: Optional[int]):
         cur.execute(_sql("SELECT credits_temp_remaining FROM sessions WHERE session_id = ?"), (sid,))
         r = cur.fetchone()
         if r:
-            # Backfill imediato se base antiga retornou NULL
             raw = r["credits_temp_remaining"]
             if raw is None:
                 cur.execute(_sql("UPDATE sessions SET credits_temp_remaining = ? WHERE session_id = ?"),
@@ -342,7 +326,6 @@ def credits_status(user_id: Optional[int]):
 
     payload = {"ok": True, "data": {"session": session_credits, "user": user_credits, "free_credits": FREE_CREDITS}}
     resp = make_response(jsonify(payload))
-    # Define cookie quando criado agora OU quando por algum motivo ainda não estiver presente
     if created_now or not _get_session_id():
         _ensure_session_cookie(resp, sid)
     return resp
@@ -369,7 +352,7 @@ def auth_login():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
-    if not email ou not password:
+    if not email or not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
     user = get_user_by_email(email)
     if not user:
@@ -423,10 +406,7 @@ def user_profile(user_id: Optional[int]):
 # Analyze
 # ==========================================================
 def _ensure_session() -> Tuple[str, bool]:
-    """
-    Garante sessão; retorna (session_id, created_now).
-    Importante para endpoints JSON conseguirem setar cookie quando a sessão é criada aqui.
-    """
+    """Garante sessão; retorna (session_id, created_now)."""
     session_id = _get_session_id()
     if session_id:
         return session_id, False
@@ -528,11 +508,7 @@ def purchase(user_id: Optional[int]):
 # ==========================================================
 @app.get("/__debug/session_check")
 def debug_session_check():
-    """
-    Diagnóstico de sessão/cookie:
-    - Não consome créditos
-    - Apenas garante criação de sessão se não existir (como o restante do app)
-    """
+    """Diagnóstico de sessão/cookie (não consome créditos)."""
     from db.models import db_cursor
     sid, created_now = _ensure_session_created()
     _ensure_session_persisted(sid)
