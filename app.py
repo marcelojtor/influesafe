@@ -18,6 +18,7 @@ from flask import (
     make_response,
 )
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix  # [NEW] respeitar HTTPS atrás do proxy
 
 # ------ DB init / schema helpers ------
 from db.models import (
@@ -43,6 +44,9 @@ from payments import get_payment_provider  # garante public get_payment_provider
 # ==========================================================
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-influe")
+
+# [NEW] Faz o Flask confiar nos headers do proxy do Render (HTTPS/host)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 # Políticas / Operação
 FREE_CREDITS = int(os.environ.get("FREE_CREDITS", "3"))
@@ -94,14 +98,21 @@ def _ua_hash() -> str:
 def _get_session_id() -> Optional[str]:
     return request.cookies.get("influe_session")
 
+def _is_https_request() -> bool:
+    # Render/Proxy: confia em X-Forwarded-Proto; ProxyFix já ajusta request.is_secure
+    xfp = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+    return bool(request.is_secure or xfp == "https")
+
 def _ensure_session_cookie(resp, session_id: str):
+    # [CHANGED] 'secure' dinâmico conforme HTTPS real atrás do proxy + path="/"
     resp.set_cookie(
         "influe_session",
         session_id,
         max_age=60 * 60 * 24 * 7,
         httponly=True,
         samesite="Lax",
-        secure=False if app.debug else True,
+        secure=_is_https_request(),
+        path="/",
     )
     return resp
 
@@ -358,7 +369,7 @@ def auth_login():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = (data.get("password") or "")
-    if not email or not password:
+    if not email ou not password:
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
     user = get_user_by_email(email)
     if not user:
@@ -511,6 +522,52 @@ def purchase(user_id: Optional[int]):
     provider = get_payment_provider()
     checkout = provider.start_checkout(user_id=user_id, package=package)
     return jsonify({"ok": checkout.get("ok", False), "checkout": checkout})
+
+# ==========================================================
+# Rota de diagnóstico (temporária)
+# ==========================================================
+@app.get("/__debug/session_check")
+def debug_session_check():
+    """
+    Diagnóstico de sessão/cookie:
+    - Não consome créditos
+    - Apenas garante criação de sessão se não existir (como o restante do app)
+    """
+    from db.models import db_cursor
+    sid, created_now = _ensure_session_created()
+    _ensure_session_persisted(sid)
+    has_cookie = bool(_get_session_id())
+
+    db_row = None
+    with db_cursor() as cur:
+        cur.execute(_sql("SELECT session_id, credits_temp_remaining, created_at FROM sessions WHERE session_id = ?"), (sid,))
+        r = cur.fetchone()
+        if r:
+            db_row = {
+                "session_id": r["session_id"],
+                "credits_temp_remaining": r["credits_temp_remaining"],
+                "created_at": str(r["created_at"]),
+            }
+
+    payload = {
+        "ok": True,
+        "data": {
+            "has_cookie": has_cookie,
+            "sid_from_cookie": _get_session_id(),
+            "sid_new_or_existing": sid,
+            "xfp": request.headers.get("X-Forwarded-Proto"),
+            "request_is_secure": bool(request.is_secure),
+            "db_row": db_row,
+            "just_created": created_now,
+        },
+    }
+    resp = make_response(jsonify(payload))
+    if created_now or not has_cookie:
+        _ensure_session_cookie(resp, sid)
+        payload["data"]["set_cookie_in_response"] = True
+    else:
+        payload["data"]["set_cookie_in_response"] = False
+    return resp
 
 # ==========================================================
 # Servir temp (debug)
