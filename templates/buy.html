@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="container" style="padding: 2rem 0 3rem;">
+  <section class="panel" style="max-width: 760px; margin: 0 auto; padding: 1.25rem 1.25rem 1.5rem;">
+    <header class="flex between center-v" style="gap:.5rem; margin-bottom: .5rem;">
+      <h1 style="margin:0;">Comprar créditos</h1>
+      <a class="btn btn-ghost" href="/" aria-label="Voltar">Voltar</a>
+    </header>
+
+    <div class="divider"></div>
+
+    <div class="flex wrap" style="gap:1rem;">
+      <!-- Card de oferta -->
+      <div class="card" style="flex:1 1 380px; border:1px solid var(--border); border-radius:16px; padding:1rem; background:var(--panel);">
+        <h2 style="margin:.25rem 0 .5rem;">Pacote de 10 créditos</h2>
+        <p class="muted" style="margin:0 0 .75rem;">
+          Use seus créditos para analisar fotos e textos. <strong>Validade: 120 dias</strong> após a compra.
+        </p>
+
+        <ul style="margin:.5rem 0 1rem; padding-left: 1.25rem; line-height:1.6;">
+          <li>Válidos para imagem e texto</li>
+          <li>Resultado com score de risco, tags e recomendações</li>
+          <li>Sem assinatura: compre quando precisar</li>
+        </ul>
+
+        <div class="row" style="align-items:flex-end; justify-content:space-between;">
+          <div class="col">
+            <span class="muted">Pacote</span>
+            <div style="font-size:1.25rem; font-weight:600;">10 créditos</div>
+          </div>
+          <div class="col" style="text-align:right;">
+            <span class="muted">Validade</span>
+            <div style="font-size:1.25rem; font-weight:600;">120 dias</div>
+          </div>
+        </div>
+
+        <div class="divider" style="margin:1rem 0;"></div>
+
+        <!-- BOTÃO VERDE (placeholder PagBank) -->
+        <a
+          id="btn-pagbank"
+          class="btn"
+          style="display:inline-block; width:100%; text-align:center; background:#16a34a; border:1px solid #16a34a; color:#fff; padding:.9rem 1rem; border-radius:12px; font-weight:600;"
+          href="https://pagbank.com/checkout/ficticio-influe"  <!-- placeholder -->
+          target="_blank" rel="noopener"
+        >
+          Pagar com PagBank
+        </a>
+
+        <p class="hint" style="margin:.75rem 0 0;">
+          Você será direcionado ao PagBank. Após a confirmação, os créditos entram automaticamente na sua conta.
+        </p>
+      </div>
+
+      <!-- Dicas / FAQ curto -->
+      <aside class="card" style="flex:1 1 260px; border:1px solid var(--border); border-radius:16px; padding:1rem; background:var(--panel-2); min-width: 260px;">
+        <h3 style="margin:.25rem 0 .5rem;">Como funciona?</h3>
+        <ol style="margin:.5rem 0 0; padding-left:1.25rem; line-height:1.6;">
+          <li>Clique em <em>Pagar com PagBank</em> e finalize a compra.</li>
+          <li>O PagBank notifica o INFLUE (webhook seguro).</li>
+          <li>Seus créditos são adicionados automaticamente.</li>
+        </ol>
+        <p class="muted" style="margin:.75rem 0 0;">
+          Em caso de dúvida, fale com o suporte.
+        </p>
+      </aside>
+    </div>
+  </section>
+</main>
+{% endblock %}
