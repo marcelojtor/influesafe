@@ -1,276 +1,222 @@
 # services/openai_client.py
-# INFLUE — Cliente de IA (stub operacional + “switch” para produção)
-# Foco: garantir que /analyze_photo e /analyze_text funcionem end-to-end AGORA,
-# sem dependências extras. Quando formos ligar a IA real, ativamos via env.
-
-from __future__ import annotations
+# INFLUE — Cliente OpenAI (multimodal, texto+imagem)
+# Requisitos: pip install openai
+# Variáveis de ambiente:
+#   - OPENAI_API_KEY           (obrigatória)
+#   - OPENAI_VISION_MODEL      (opcional; padrão: gpt-4o-mini)
+#   - OPENAI_TEXT_MODEL        (opcional; padrão: gpt-4o-mini)
 
 import os
-import re
-import json
-import math
 import time
-import hashlib
+import json
+import base64
 from typing import Any, Dict, List, Optional
 
+# OpenAI SDK moderno
+try:
+    from openai import OpenAI
+except Exception:
+    # fallback nome antigo do pacote (caso o deploy use versão anterior)
+    from openai import OpenAI  # type: ignore
 
-def _env_bool(name: str, default: bool) -> bool:
-    val = os.environ.get(name)
-    if val is None:
+
+_SYSTEM_PROMPT_IMAGE = (
+    "Você é um analista de imagem especializado em reputação, privacidade e risco de engajamento nas redes sociais. "
+    "Analise a imagem recebida (conteúdo visual geral, estética, contexto implícito) e responda EM JSON puro, SEM comentários, no formato:\n"
+    "{\n"
+    '  "summary": "1 a 3 frases objetivas sobre o que a imagem comunica e possíveis implicações",\n'
+    '  "score_risk": 0-100,  // 0 baixo risco, 100 altíssimo risco\n'
+    '  "tags": ["palavras-chave", "..."],\n'
+    '  "recommendations": ["até 5 recomendações curtas e acionáveis"]\n'
+    "}\n"
+    "Considere privacidade (rostos, placas, documentos), sinais de controvérsia, brand safety e possíveis leituras equivocadas. "
+    "Se não tiver contexto suficiente, assuma um cenário neutro e aponte incertezas."
+)
+
+_SYSTEM_PROMPT_TEXT = (
+    "Você é um analista de conteúdo textual especializado em reputação, privacidade e risco de engajamento nas redes sociais. "
+    "Analise o texto e responda EM JSON puro, SEM comentários, no formato:\n"
+    "{\n"
+    '  "summary": "1 a 3 frases objetivas sobre o conteúdo e implicações",\n'
+    '  "score_risk": 0-100,\n'
+    '  "tags": ["palavras-chave", "..."],\n'
+    '  "recommendations": ["até 5 recomendações curtas e acionáveis"]\n'
+    "}\n"
+    "Considere: sensibilidade do tema, tom, possíveis leituras ambíguas, privacidade e brand safety."
+)
+
+
+def _coerce_int(v: Any, default: int = 0) -> int:
+    try:
+        i = int(v)
+        if i < 0:
+            return 0
+        if i > 100:
+            return 100
+        return i
+    except Exception:
         return default
-    return str(val).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _safe_parse_model_json(s: str) -> Dict[str, Any]:
+    """
+    Tenta extrair um JSON válido da resposta do modelo.
+    Se falhar, cria um fallback mínimo para não quebrar o app.
+    """
+    s = s.strip()
+    # remove blocos de markdown ```json ... ```
+    if s.startswith("```"):
+        # tenta encontrar o trecho entre os fences
+        parts = s.split("```")
+        # algo como: ["", "json\n{...}", ""]
+        for chunk in parts:
+            chunk = chunk.strip()
+            if chunk.startswith("json"):
+                chunk = chunk[4:].strip()
+            if chunk.startswith("{") and chunk.endswith("}"):
+                s = chunk
+                break
+    try:
+        data = json.loads(s)
+    except Exception:
+        # fallback muito simples
+        return {
+            "summary": s[:240] + ("..." if len(s) > 240 else ""),
+            "score_risk": 50,
+            "tags": [],
+            "recommendations": [],
+        }
+    # saneamento mínimo
+    out = {
+        "summary": data.get("summary") or "",
+        "score_risk": _coerce_int(data.get("score_risk"), 50),
+        "tags": data.get("tags") or [],
+        "recommendations": data.get("recommendations") or [],
+    }
+    # garante tipos
+    if not isinstance(out["tags"], list):
+        out["tags"] = [str(out["tags"])]
+    if not isinstance(out["recommendations"], list):
+        out["recommendations"] = [str(out["recommendations"])]
+    if not isinstance(out["summary"], str):
+        out["summary"] = str(out["summary"])
+    return out
 
 
 class OpenAIClient:
-    """
-    Cliente de IA do INFLUE.
+    def __init__(self):
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY não configurada.")
+        self.client = OpenAI(api_key=api_key)
 
-    MODO ATUAL (operacional / MVP):
-      - Usa STUB determinístico para gerar:
-        score_risk (0-100), tags, summary e recommendations.
-      - Não requer biblioteca externa, nem altera requirements.txt.
-      - Faz o portal “funcionar agora” com respostas coerentes.
+        self.vision_model = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini")
+        self.text_model = os.environ.get("OPENAI_TEXT_MODEL", "gpt-4o-mini")
 
-    MODO PRODUÇÃO (planejado):
-      - Quando quiser integrar com a OpenAI:
-        * Definir OPENAI_USE_STUB=false
-        * Adicionar SDK e/ou implementar chamada REST
-        * Preencher OPENAI_API_KEY, OPENAI_MODEL_VISION, OPENAI_MODEL_TEXT
-    """
+        # tempo máximo por chamada (segurança)
+        self.request_timeout_s = float(os.environ.get("OPENAI_TIMEOUT_S", "30"))
 
-    def __init__(self) -> None:
-        # Switch de operação
-        self.use_stub = _env_bool("OPENAI_USE_STUB", True)
+        # pequenas retentativas
+        self.retries = 2
+        self.retry_backoff_s = 1.2
 
-        # Parâmetros pensados para produção (não usados no stub)
-        self.api_key = os.environ.get("OPENAI_API_KEY", "")
-        self.model_vision = os.environ.get("OPENAI_MODEL_VISION", "gpt-5-vision")
-        self.model_text = os.environ.get("OPENAI_MODEL_TEXT", "gpt-5")
-        self.timeout_s = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "12"))
-
-    # ---------------------------------------------------------------------
-    # PÚBLICO: analisadores chamados pelo app.py
-    # ---------------------------------------------------------------------
-    def analyze_image(self, file_path: str) -> Dict[str, Any]:
+    # -----------------------------------------------------
+    # Análise de IMAGEM
+    # -----------------------------------------------------
+    def analyze_image(self, filepath: str) -> Dict[str, Any]:
         """
-        Analisa uma imagem e retorna um dicionário padronizado:
-        {
-          "ok": True,
-          "score_risk": int 0..100,
-          "tags": [str],
-          "summary": str,
-          "recommendations": [str, str, str]
-        }
+        Lê a imagem local -> base64 -> envia ao modelo multimodal -> retorna dicionário padronizado.
         """
-        if self.use_stub:
-            return self._stub_analyze_image(file_path)
+        try:
+            with open(filepath, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+        except Exception as e:
+            return {"ok": False, "error": f"Falha ao ler imagem: {e}"}
 
-        # Produção real (placeholder seguro até habilitarmos)
-        return {
-            "ok": False,
-            "error": (
-                "Integração OpenAI desativada neste build. "
-                "Defina OPENAI_USE_STUB=true para usar o stub, ou implemente a chamada real."
-            ),
-        }
+        user_instruction = (
+            "Analise esta imagem para publicação em redes sociais. Avalie riscos, privacidade e reputação. "
+            "Responda estritamente no JSON especificado."
+        )
 
+        # Monta mensagens no formato chat (com input_image em base64 data URL)
+        content = [
+            {"type": "text", "text": user_instruction},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+            },
+        ]
+
+        last_err = None
+        for attempt in range(self.retries + 1):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.vision_model,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT_IMAGE},
+                        {"role": "user", "content": content},
+                    ],
+                    temperature=0.2,
+                    max_tokens=600,
+                    timeout=self.request_timeout_s,
+                )
+                text = resp.choices[0].message.content or ""
+                data = _safe_parse_model_json(text)
+                return {
+                    "ok": True,
+                    "summary": data["summary"],
+                    "score_risk": data["score_risk"],
+                    "tags": data["tags"],
+                    "recommendations": data["recommendations"],
+                }
+            except Exception as e:
+                last_err = e
+                if attempt < self.retries:
+                    time.sleep(self.retry_backoff_s)
+                else:
+                    return {"ok": False, "error": f"OpenAI (image) falhou: {last_err}"}
+
+        return {"ok": False, "error": "Falha desconhecida na análise de imagem."}
+
+    # -----------------------------------------------------
+    # Análise de TEXTO
+    # -----------------------------------------------------
     def analyze_text(self, text: str) -> Dict[str, Any]:
         """
-        Analisa um texto/legenda e retorna o mesmo formato da imagem.
+        Envia apenas texto ao modelo -> retorna dicionário padronizado.
         """
-        if self.use_stub:
-            return self._stub_analyze_text(text)
+        user_instruction = (
+            "Analise o texto para publicação em redes sociais. Avalie riscos, privacidade, tom e reputação. "
+            "Responda estritamente no JSON especificado."
+        )
 
-        # Produção real (placeholder seguro até habilitarmos)
-        return {
-            "ok": False,
-            "error": (
-                "Integração OpenAI desativada neste build. "
-                "Defina OPENAI_USE_STUB=true para usar o stub, ou implemente a chamada real."
-            ),
-        }
+        last_err = None
+        for attempt in range(self.retries + 1):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.text_model,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT_TEXT},
+                        {"role": "user", "content": f"{user_instruction}\n\nTexto:\n{text}"},
+                    ],
+                    temperature=0.2,
+                    max_tokens=600,
+                    timeout=self.request_timeout_s,
+                )
+                out = resp.choices[0].message.content or ""
+                data = _safe_parse_model_json(out)
+                return {
+                    "ok": True,
+                    "summary": data["summary"],
+                    "score_risk": data["score_risk"],
+                    "tags": data["tags"],
+                    "recommendations": data["recommendations"],
+                }
+            except Exception as e:
+                last_err = e
+                if attempt < self.retries:
+                    time.sleep(self.retry_backoff_s)
+                else:
+                    return {"ok": False, "error": f"OpenAI (text) falhou: {last_err}"}
 
-    # ---------------------------------------------------------------------
-    # STUBS (operacional) — determinísticos e úteis para QA
-    # ---------------------------------------------------------------------
-    def _stub_analyze_image(self, file_path: str) -> Dict[str, Any]:
-        """
-        Heurísticas simples baseadas no nome do arquivo e hash do conteúdo
-        para gerar respostas consistentes e úteis nos testes.
-        """
-        try:
-            # Base determinística: hash do caminho
-            h = hashlib.sha256(file_path.encode("utf-8", errors="ignore")).hexdigest()
-            seed = int(h[:8], 16)
-
-            # Tags por palavras-chave do nome do arquivo
-            lname = file_path.lower()
-            tags: List[str] = []
-            keywords = [
-                ("violencia", "violência"),
-                ("sangue", "sangue"),
-                ("arma", "arma"),
-                ("bebida", "álcool"),
-                ("cerveja", "álcool"),
-                ("vinho", "álcool"),
-                ("marca", "marca_em_foco"),
-                ("logo", "marca_em_foco"),
-                ("politica", "política"),
-                ("campanha", "política"),
-                ("corrupcao", "política"),
-                ("dinheiro", "ostentação"),
-                ("ostentacao", "ostentação"),
-                ("biquini", "sensual"),
-                ("praia", "contexto_praia"),
-                ("animal", "animal"),
-                ("silvestre", "animal_silvestre"),
-            ]
-            for k, tag in keywords:
-                if k in lname and tag not in tags:
-                    tags.append(tag)
-
-            # Score baseia-se no seed + presença de tags sensíveis
-            base = seed % 100
-            risk = base
-
-            # Penaliza (sobe risco) se houver tags sensíveis
-            sensitive = {"violência", "arma", "sangue", "política", "álcool", "animal_silvestre"}
-            bump = sum(10 for t in tags if t in sensitive)
-            risk = max(0, min(100, risk // 2 + bump))
-
-            # Classificação resumida
-            label = self._risk_label(risk)
-
-            # Resumo e recomendações
-            summary = (
-                f"A imagem apresenta {label} risco de interpretação negativa. "
-                "Considere pequenos ajustes antes de publicar."
-            )
-            recs = self._recommendations_for_tags(tags, is_image=True)
-            if not recs:
-                recs = [
-                    "Verifique iluminação e enquadramento para maior apelo visual.",
-                    "Evite elementos de fundo que possam distrair ou comprometer sua imagem.",
-                    "Inclua uma legenda objetiva que destaque o valor do post.",
-                ]
-
-            return {
-                "ok": True,
-                "score_risk": risk,
-                "tags": tags,
-                "summary": summary,
-                "recommendations": recs[:3],
-            }
-        except Exception as e:
-            return {"ok": False, "error": f"Falha no stub de imagem: {e}"}
-
-    def _stub_analyze_text(self, text: str) -> Dict[str, Any]:
-        """
-        Heurísticas simples no texto para identificar potenciais riscos reputacionais.
-        """
-        try:
-            t = (text or "").strip()
-            if not t:
-                return {"ok": False, "error": "Texto vazio."}
-
-            h = hashlib.sha256(t.encode("utf-8", errors="ignore")).hexdigest()
-            seed = int(h[:8], 16)
-
-            # Normaliza para análise
-            ln = t.lower()
-
-            # Regras básicas de risco
-            patterns = {
-                "ofensa": r"\b(burro|idiota|otário|imbecil|lixo|ódio|hater)\b",
-                "álcool": r"\b(cerveja|vodka|whisky|tequila|bebida|cachaça|drinks?)\b",
-                "política": r"\b(eleição|política|partido|campanha|corrupção|governo)\b",
-                "sensível": r"\b(sangue|violência|arma|tiro|assalto|morte)\b",
-                "marca_em_foco": r"[@#]?\b(nike|adidas|apple|samsung|coca[- ]?cola|heineken)\b",
-                "ostentação": r"\b(luxo|ostentação|milionário|carro\s+caro|rolext?)\b",
-            }
-
-            tags: List[str] = []
-            bump = 0
-            for tag, rx in patterns.items():
-                if re.search(rx, ln, flags=re.IGNORECASE):
-                    tags.append(tag)
-                    if tag in {"sensível", "política"}:
-                        bump += 20
-                    elif tag in {"ofensa", "álcool"}:
-                        bump += 12
-                    else:
-                        bump += 6
-
-            base = seed % 100
-            risk = max(0, min(100, base // 2 + bump))
-
-            label = self._risk_label(risk)
-            summary = (
-                f"O texto sugere {label} risco de reação negativa. "
-                "Ajustes de tom e clareza podem melhorar a recepção."
-            )
-
-            recs = self._recommendations_for_tags(tags, is_image=False)
-            if not recs:
-                recs = [
-                    "Prefira um tom empático e direto para evitar interpretações dúbias.",
-                    "Evite termos que possam soar ofensivos ou polarizadores.",
-                    "Inclua um call-to-action suave e relevante ao seu público.",
-                ]
-
-            return {
-                "ok": True,
-                "score_risk": risk,
-                "tags": tags,
-                "summary": summary,
-                "recommendations": recs[:3],
-            }
-        except Exception as e:
-            return {"ok": False, "error": f"Falha no stub de texto: {e}"}
-
-    # ---------------------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------------------
-    @staticmethod
-    def _risk_label(score: int) -> str:
-        if score >= 70:
-            return "ALTO"
-        if score >= 40:
-            return "MÉDIO"
-        return "BAIXO"
-
-    @staticmethod
-    def _recommendations_for_tags(tags: List[str], is_image: bool) -> List[str]:
-        recs: List[str] = []
-        tagset = set(tags)
-
-        # Recomendações específicas por risco
-        if "álcool" in tagset:
-            recs.append("Se houver bebidas, mantenha o foco no contexto e responsabilidade social.")
-        if "política" in tagset:
-            recs.append("Evite generalizações e frases categóricas; ofereça contexto para reduzir polarização.")
-        if "violência" in tagset or "arma" in tagset or "sangue" in tagset or "sensível" in tagset:
-            recs.append("Evite imagery/termos que sugiram violência explícita; considere suavizar a narrativa.")
-        if "marca_em_foco" in tagset:
-            recs.append("Cheque direitos de uso de marca e evite enquadramento que pareça endorsement indevido.")
-        if "ostentação" in tagset:
-            recs.append("Balanceie com uma mensagem de utilidade/valor para o público, evitando percepção de ostentação.")
-        if "animal_silvestre" in tagset:
-            recs.append("Evite interação direta com animal silvestre; destaque responsabilidade ambiental.")
-
-        # Recomendações genéricas por tipo
-        if is_image:
-            recs.append("Ajuste iluminação e enquadramento; evite ruídos no fundo e preserve a nitidez.")
-            recs.append("Use uma legenda que direcione a interpretação e reforce seu posicionamento.")
-        else:
-            recs.append("Releia buscando ambiguidade; substitua termos potentes por equivalentes neutros.")
-            recs.append("Inclua 1 chamada clara (CTA) e evite parágrafos muito longos.")
-
-        # Deduplicate mantendo ordem
-        dedup: List[str] = []
-        seen = set()
-        for r in recs:
-            if r not in seen:
-                dedup.append(r)
-                seen.add(r)
-        return dedup
+        return {"ok": False, "error": "Falha desconhecida na análise de texto."}
