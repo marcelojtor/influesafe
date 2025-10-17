@@ -15,7 +15,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
   <style>
-    /* -------- Modal (oculto por padrão) -------- */
     .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
     .modal{position:fixed;inset:0;display:none;place-items:center;z-index:50;pointer-events:none}
     .modal.show{display:grid}
@@ -39,14 +38,9 @@
   <header class="topbar">
     <div class="container flex between center-v topbar-row">
       <a class="brand flex center-v" href="/" aria-label="Ir para início">
-        <img
-          class="logo-img"
-          src="/static/logo/influe_logo.png"
-          alt="INFLUE"
-          width="34" height="34"
-          loading="eager" decoding="async"
-          style="border-radius:12px;object-fit:cover"
-        />
+        <img class="logo-img" src="/static/logo/influe_logo.png" alt="INFLUE"
+             width="34" height="34" loading="eager" decoding="async"
+             style="border-radius:12px;object-fit:cover" />
         <span class="brandtext">INFLUE</span>
       </a>
 
@@ -63,11 +57,9 @@
           </strong>
         </span>
 
-        <!-- Botão legado oculto (compat com main.js) -->
         <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
           Comprar 10 créditos
         </button>
-        <!-- Link visível para compra -->
         <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
           Comprar 10 créditos
         </a>
@@ -89,7 +81,6 @@
 
   <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
 
-  <!-- Modal -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
       <div class="flex between center-v">
