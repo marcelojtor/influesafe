@@ -1,22 +1,30 @@
-segue codigo em produção do styles.css em produção reescreva e me traga de volta a logo ja esta no repositório github:   /* ========== Base ==========
-   Cores claras no texto, alto contraste no mobile,
-   fundo com degradê azul -> preto (volta do original)
-================================ */
+/* =========================================
+   INFLUE — styles.css (mobile-first, dark)
+   Texto claro + degradê azul→preto + logo 34px
+========================================= */
+
+/* ---------- Tokens ---------- */
 :root{
-  --bg-start:#0b1226;   /* azul bem escuro */
-  --bg-end:#04070f;     /* quase preto */
+  --bg-start:#0b1226; /* azul bem escuro */
+  --bg-end:#04070f;   /* quase preto */
+
   --text:#ffffff;
   --muted:#b8c2d9;
+
   --panel:rgba(255,255,255,0.06);
   --panel-2:rgba(255,255,255,0.04);
-  --border:rgba(96,165,250,.45);         /* azul */
+
+  --border:rgba(96,165,250,.45);      /* azul */
   --border-soft:rgba(148,163,184,.25);
-  --primary:#3b82f6;                     /* azul vivo */
+
+  --primary:#3b82f6;                  /* azul vivo */
   --primary-600:#2563eb;
   --primary-700:#1d4ed8;
+
   --ok:#22c55e;
 }
 
+/* ---------- Base ---------- */
 *{box-sizing:border-box}
 html,body{height:100%}
 body.theme-dark{
@@ -24,15 +32,22 @@ body.theme-dark{
   font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji";
   color:var(--text);
   background:linear-gradient(180deg,var(--bg-start),var(--bg-end)) fixed no-repeat;
-  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
 }
 a{color:#cfe2ff;text-decoration:none}
 a:hover{text-decoration:underline}
 
+/* Containers & helpers */
 .container{width:min(1120px,92vw);margin:0 auto}
+.flex{display:flex}
+.between{justify-content:space-between}
+.center-v{align-items:center}
+.wrap{flex-wrap:wrap}
 
-/* ========== Topbar ========== */
-.topbar{position:sticky;top:0;z-index:30;
+/* ---------- Topbar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:30;
   backdrop-filter:saturate(120%) blur(8px);
   background:linear-gradient(180deg, rgba(3,7,18,.65), rgba(3,7,18,.25));
   border-bottom:1px solid var(--border-soft);
@@ -40,17 +55,27 @@ a:hover{text-decoration:underline}
 .topbar-row{
   display:flex;align-items:center;justify-content:space-between;
   gap:.75rem;padding:.6rem 0;
-  flex-wrap:wrap; /* garante quebra bonita no mobile */
+  flex-wrap:wrap; /* boa quebra no mobile */
 }
 .brand{display:flex;align-items:center;gap:.55rem;color:#fff;text-decoration:none}
-.logo{width:34px;height:34px;border-radius:12px;background:var(--primary);display:grid;place-items:center;font-weight:800}
+
+/* LOGO (imagem) — 34x34 como o favicon */
+.logo-img{
+  width:34px;height:34px;border-radius:12px;object-fit:cover;display:block;
+}
 .brandtext{font-weight:800;letter-spacing:.5px}
+
+/* Estado / créditos */
 .auth{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
-.pill{font-size:.85rem;color:#dbe7ff;background:rgba(255,255,255,.06);border:1px solid var(--border-soft);padding:.35rem .6rem;border-radius:999px;display:inline-flex;align-items:center;gap:.4rem}
+.pill{
+  font-size:.85rem;color:#dbe7ff;background:rgba(255,255,255,.06);
+  border:1px solid var(--border-soft);padding:.35rem .6rem;border-radius:999px;
+  display:inline-flex;align-items:center;gap:.4rem
+}
 .muted{color:var(--muted)}
 .credits strong{color:#fff}
 
-/* Botões */
+/* ---------- Botões ---------- */
 .btn{
   appearance:none;border:1px solid transparent;border-radius:12px;
   padding:.7rem .95rem;font-weight:600;cursor:pointer;
@@ -66,11 +91,12 @@ a:hover{text-decoration:underline}
   background:rgba(6,13,30,.6);
   border:2px solid var(--primary);
   color:#e8f1ff;
+  border-radius:12px;
 }
 
-/* ========== Main / Hero ==========
-   Ordem mobile: upload-card primeiro, depois copy
-================================ */
+/* ---------- Main / Hero ----------
+   Mobile-first: upload-card vem primeiro
+----------------------------------- */
 .main{display:grid;grid-template-columns:1fr;gap:1rem;padding:1rem 0 2rem}
 .upload-card{
   background:linear-gradient(180deg, rgba(17,24,39,.55), rgba(15,23,42,.35));
@@ -101,13 +127,18 @@ a:hover{text-decoration:underline}
 .subtitle{margin:0 0 .6rem;color:#d7e2ff}
 .bullets{margin:.5rem 0 0 1rem;line-height:1.6;color:#cdd7f0}
 
-/* ========== Modal básico ========== */
+/* ---------- Painéis / Modal ---------- */
 .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
 .modal{position:fixed;inset:0;display:none;place-items:center;z-index:50;pointer-events:none}
 .modal.show{display:grid}
 .modal-backdrop.show{display:block}
-.panel{width:min(520px,92vw);background:linear-gradient(180deg, rgba(20,25,40,.95), rgba(10,12,20,.95));
-  border:1px solid var(--border-soft);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.55);padding:1rem 1rem 1.25rem;pointer-events:auto}
+.panel{
+  width:min(520px,92vw);
+  background:linear-gradient(180deg, rgba(20,25,40,.95), rgba(10,12,20,.95));
+  border:1px solid var(--border-soft);border-radius:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.55);
+  padding:1rem 1rem 1.25rem;pointer-events:auto
+}
 .panel-head{display:flex;align-items:center;justify-content:space-between}
 .tabs{display:flex;gap:.5rem;border:1px solid var(--border-soft);border-radius:10px;padding:.25rem;background:rgba(255,255,255,.05);margin:.6rem 0 0}
 .tab{flex:1;text-align:center;border-radius:8px;padding:.45rem .6rem;cursor:pointer}
@@ -117,11 +148,11 @@ a:hover{text-decoration:underline}
 .form-actions{display:flex;justify-content:flex-end}
 .divider{height:1px;background:var(--border-soft);margin:1rem 0}
 
-/* ========== Footer ========== */
+/* ---------- Footer ---------- */
 .footer{border-top:1px solid var(--border-soft);margin-top:1rem}
 .footer-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.9rem 0;flex-wrap:wrap}
 
-/* ========== Responsividade extra ========== */
+/* ---------- Responsividade extra ---------- */
 @media (max-width: 480px){
   .brandtext{font-size:1.05rem}
   .btn{padding:.65rem .85rem}
