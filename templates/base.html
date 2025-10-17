@@ -32,41 +32,44 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="container flex between center-v">
-      <a class="brand flex center-v" href="/" aria-label="Ir para início">
-        <div class="logo">I</div>
+    <div class="container topbar-grid">
+      <!-- Marca -->
+      <a class="brand" href="/" aria-label="Ir para início">
+        <div class="logo" aria-hidden="true">I</div>
         <span class="brandtext">INFLUE</span>
       </a>
 
-      <!-- Barra de ações / estado do usuário -->
-      <nav class="auth row" style="align-items:center">
-        <span id="user-state" class="pill tag" title="Estado de sessão">
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="#6aa8ff"/></svg>
-          <span id="user-label">Convidado</span>
-        </span>
+      <!-- Estado/Créditos + Ações -->
+      <div class="topbar-actions">
+        <div class="state-line">
+          <span id="user-state" class="pill tag" title="Estado de sessão">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="#6aa8ff"/></svg>
+            <span id="user-label">Convidado</span>
+          </span>
 
-        <!-- Saldo dinâmico (sessão | usuário) -->
-        <span class="muted" style="margin-left:.25rem;">
-          Créditos:
-          <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">
-            Sessão: {{ credits_left|default(0) }} | Usuário: — 
-          </strong>
-        </span>
+          <span class="muted credits-inline" aria-label="Créditos da sessão e do usuário">
+            Créditos:
+            <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">
+              Sessão: {{ credits_left|default(0) }} | Usuário: —
+            </strong>
+          </span>
+        </div>
 
-        <!-- Botões de ação -->
-        <!-- (1) Botão antigo mantido porém oculto, para não quebrar main.js atual -->
-        <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
-          Comprar 10 créditos
-        </button>
-        <!-- (2) Novo link direto para a página de compra -->
-        <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
-          Comprar 10 créditos
-        </a>
+        <div class="action-line">
+          <!-- (1) Botão antigo, mantido oculto para compatibilidade com main.js -->
+          <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
+            Comprar 10 créditos
+          </button>
+          <!-- (2) Link real para página de compra -->
+          <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
+            Comprar 10 créditos
+          </a>
 
-        <!-- Área de login/logout -->
-        <button id="btn-open-auth" class="btn btn-ghost" type="button">Entrar / Criar conta</button>
-        <button id="btn-logout" class="btn btn-ghost" type="button" style="display:none;">Sair</button>
-      </nav>
+          <!-- Login/Logout -->
+          <button id="btn-open-auth" class="btn btn-ghost" type="button">Entrar / Criar conta</button>
+          <button id="btn-logout" class="btn btn-ghost" type="button" style="display:none;">Sair</button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -85,18 +88,17 @@
   <!-- Modal de Autenticação (Entrar / Criar conta) -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
-      <div class="flex between center-v">
+      <div class="row" style="justify-content:space-between;align-items:center">
         <h2 id="auth-title" style="margin:.25rem 0 0;">Acessar INFLUE</h2>
         <button id="auth-close" class="btn btn-ghost" type="button" aria-label="Fechar">Fechar</button>
       </div>
 
-      <!-- Tabs -->
       <div class="tabs" role="tablist" aria-label="Opções de autenticação">
         <div id="tab-login"  class="tab active" role="tab" aria-selected="true"  tabindex="0">Entrar</div>
         <div id="tab-signup" class="tab"        role="tab" aria-selected="false" tabindex="-1">Criar conta</div>
       </div>
 
-      <!-- FORM: ENTRAR -->
+      <!-- ENTRAR -->
       <form id="form-login" class="col" autocomplete="on">
         <div class="field">
           <label for="auth-email" class="muted">E-mail</label>
@@ -106,17 +108,15 @@
           <label for="auth-password" class="muted">Senha</label>
           <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" required />
         </div>
-
         <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
           <button id="btn-login" class="btn btn-primary" type="submit">Entrar</button>
         </div>
-
         <p class="hint" style="margin:.5rem 0 0;">
           Ainda não é cadastrado? <span id="link-open-signup" class="muted-link">Crie sua conta agora</span>.
         </p>
       </form>
 
-      <!-- FORM: CRIAR CONTA -->
+      <!-- CRIAR CONTA -->
       <form id="form-signup" class="col" style="display:none;" autocomplete="on">
         <div class="field">
           <label for="reg-email" class="muted">E-mail</label>
@@ -134,18 +134,15 @@
           <label for="reg-pass2" class="muted">Confirmar senha</label>
           <input id="reg-pass2" type="password" placeholder="Repita a senha" autocomplete="new-password" required />
         </div>
-
         <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
           <button id="btn-register" class="btn btn-primary" type="submit">Criar conta</button>
         </div>
-
         <p class="hint" style="margin:.5rem 0 0;">
           Já possui cadastro? <span id="link-open-login" class="muted-link">Entrar</span>.
         </p>
       </form>
 
       <div id="feedback" class="muted" role="status" aria-live="polite" style="margin-top:.75rem;min-height:1.25rem;"></div>
-
       <div class="divider"></div>
       <small class="muted">Ao continuar, você concorda com nossos termos e a política de privacidade.</small>
     </div>
