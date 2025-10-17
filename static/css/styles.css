@@ -1,163 +1,131 @@
-/* =========================
-   INFLUE — Estilos base
-   Mobile-first + header responsivo
-   ========================= */
+/* ========== Base ==========
+   Cores claras no texto, alto contraste no mobile,
+   fundo com degradê azul -> preto (volta do original)
+================================ */
 :root{
-  --bg:#0b0f16;
-  --panel:#121826;
-  --panel-2:#0f1522;
-  --border:#223047;
-  --text:#eef3ff;
-  --muted:#9fb0c9;
-  --brand:#3b82f6;         /* azul principal */
-  --brand-700:#2563eb;
-  --ok:#16a34a;
+  --bg-start:#0b1226;   /* azul bem escuro */
+  --bg-end:#04070f;     /* quase preto */
+  --text:#ffffff;
+  --muted:#b8c2d9;
+  --panel:rgba(255,255,255,0.06);
+  --panel-2:rgba(255,255,255,0.04);
+  --border:rgba(96,165,250,.45);         /* azul */
+  --border-soft:rgba(148,163,184,.25);
+  --primary:#3b82f6;                     /* azul vivo */
+  --primary-600:#2563eb;
+  --primary-700:#1d4ed8;
+  --ok:#22c55e;
 }
 
 *{box-sizing:border-box}
 html,body{height:100%}
-body{
+body.theme-dark{
   margin:0;
-  background: radial-gradient(1200px 800px at 20% -10%, #152036 0%, transparent 60%) no-repeat,
-              var(--bg);
+  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji";
   color:var(--text);
-  font: 400 16px/1.5 "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background:linear-gradient(180deg,var(--bg-start),var(--bg-end)) fixed no-repeat;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
+a{color:#cfe2ff;text-decoration:none}
+a:hover{text-decoration:underline}
 
-/* Layout utilitário */
-.container{width:min(1100px,92vw);margin:0 auto}
-.flex{display:flex}
-.center-v{align-items:center}
-.between{justify-content:space-between}
-.wrap{flex-wrap:wrap}
+.container{width:min(1120px,92vw);margin:0 auto}
 
-/* ===== Topbar ===== */
-.topbar{
-  position:sticky; top:0; z-index:30;
-  background:linear-gradient(180deg, rgba(12,17,27,.95), rgba(12,17,27,.75));
-  backdrop-filter: blur(6px);
-  border-bottom:1px solid rgba(255,255,255,.04);
+/* ========== Topbar ========== */
+.topbar{position:sticky;top:0;z-index:30;
+  backdrop-filter:saturate(120%) blur(8px);
+  background:linear-gradient(180deg, rgba(3,7,18,.65), rgba(3,7,18,.25));
+  border-bottom:1px solid var(--border-soft);
 }
+.topbar-row{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:.75rem;padding:.6rem 0;
+  flex-wrap:wrap; /* garante quebra bonita no mobile */
+}
+.brand{display:flex;align-items:center;gap:.55rem;color:#fff;text-decoration:none}
+.logo{width:34px;height:34px;border-radius:12px;background:var(--primary);display:grid;place-items:center;font-weight:800}
+.brandtext{font-weight:800;letter-spacing:.5px}
+.auth{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.pill{font-size:.85rem;color:#dbe7ff;background:rgba(255,255,255,.06);border:1px solid var(--border-soft);padding:.35rem .6rem;border-radius:999px;display:inline-flex;align-items:center;gap:.4rem}
+.muted{color:var(--muted)}
+.credits strong{color:#fff}
 
-.topbar-grid{
-  display:grid;
-  grid-template-columns: 1fr;
-  gap:.6rem;
-  padding:.6rem 0.4rem .65rem;
-}
-
-.brand{
-  display:inline-flex; align-items:center; gap:.5rem; text-decoration:none; color:var(--text);
-}
-.logo{
-  width:34px;height:34px;border-radius:10px;
-  background:linear-gradient(180deg,#4f7bd4,#355aa8);
-  display:grid;place-items:center;font-weight:700;
-  box-shadow:0 6px 18px rgba(0,0,0,.45);
-}
-.brandtext{font-weight:700;letter-spacing:.4px}
-
-.topbar-actions{display:grid; gap:.45rem}
-.state-line{
-  display:flex; align-items:center; gap:.6rem; min-width:0;
-}
-.credits-inline{
-  white-space:nowrap;
-  overflow:hidden; text-overflow:ellipsis;
-  max-width:100%;
-}
-
-/* Ações (botões) */
-.action-line{display:flex; gap:.5rem; flex-wrap:wrap}
+/* Botões */
 .btn{
-  -webkit-tap-highlight-color: transparent;
-  border-radius:12px; padding:.55rem .9rem; border:1px solid var(--border);
-  background:var(--panel); color:var(--text); cursor:pointer; font-weight:600;
-  transition:transform .05s ease, background .15s ease, border-color .15s ease;
+  appearance:none;border:1px solid transparent;border-radius:12px;
+  padding:.7rem .95rem;font-weight:600;cursor:pointer;
+  background:var(--panel);color:#fff;transition:.2s;
 }
-.btn:active{transform:translateY(1px)}
-.btn-primary{
-  background:var(--brand); border-color:var(--brand);
+.btn:hover{transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-600);border-color:var(--primary-600)}
+.btn-ghost{background:transparent;border-color:var(--border-soft);color:#fff}
+.btn-ghost:hover{background:rgba(255,255,255,.06)}
+.btn-outline{
+  background:rgba(6,13,30,.6);
+  border:2px solid var(--primary);
+  color:#e8f1ff;
 }
-.btn-primary:hover{background:var(--brand-700); border-color:var(--brand-700)}
-.btn-ghost{
-  background:transparent; border-color:var(--border); color:var(--text)
-}
-.btn-ghost:hover{border-color:#2c3e5d}
 
-/* ===== Hero / Conteúdo inicial ===== */
-.hero{padding:1rem 0 1.25rem}
-.hero-grid{
-  display:grid; gap:1rem;
-  grid-template-columns: 1fr;
-}
-.hero-copy .title{font-size:1.75rem; line-height:1.2; margin:.25rem 0}
-.hero-copy .subtitle{color:var(--muted); margin:.35rem 0 0}
-
-/* Card principal (upload) */
-.hero-card{
-  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+/* ========== Main / Hero ==========
+   Ordem mobile: upload-card primeiro, depois copy
+================================ */
+.main{display:grid;grid-template-columns:1fr;gap:1rem;padding:1rem 0 2rem}
+.upload-card{
+  background:linear-gradient(180deg, rgba(17,24,39,.55), rgba(15,23,42,.35));
   border:1px solid var(--border);
-  border-radius:16px; padding:.9rem;
-  box-shadow:0 12px 30px rgba(0,0,0,.35);
+  border-radius:16px;padding:1rem;
+  box-shadow:0 10px 30px rgba(0,0,0,.4);
 }
-.hero-inner{display:flex; flex-direction:column}
-.card-title{margin:.25rem 0 .5rem; font-size:1.2rem}
-
-.actions{display:flex; gap:.6rem; flex-wrap:wrap}
-
-/* Borda azul solicitada nos botões de upload */
-.hero-card .btn-ghost{
-  border:2px solid var(--brand);
-  background:rgba(59,130,246,.08);
+.card-title{margin:.25rem 0 .75rem;font-size:1.25rem}
+.actions{display:flex;gap:.6rem;flex-wrap:wrap}
+.upload{display:flex}
+.text-area{margin-top:.85rem}
+.label{display:block;margin:.2rem 0 .4rem;color:var(--muted)}
+.text-area textarea{
+  width:100%;min-height:120px;border-radius:12px;
+  border:1px solid var(--border);background:rgba(2,6,17,.6);
+  color:#fff;padding:.8rem;font-family:inherit;outline:none;
 }
-.hero-card .btn-ghost:hover{
-  background:rgba(59,130,246,.14);
-  border-color:var(--brand-700);
-}
+.text-area textarea::placeholder{color:#a8b3cf}
+.right{display:flex;justify-content:flex-end;margin-top:.55rem}
 
-/* Feedback / resultados */
-.feedback{min-height:1.1rem; color:var(--muted); margin-top:.6rem}
+.feedback{margin-top:.6rem;color:#e6f3ff;min-height:1.25rem}
+.analysis{margin-top:1rem;border-top:1px solid var(--border-soft);padding-top:1rem}
+.chips{display:flex;gap:.6rem;flex-wrap:wrap}
+.chip{background:var(--panel);border:1px solid var(--border-soft);border-radius:12px;padding:.55rem .75rem}
 
-/* Footer */
-.footer{border-top:1px solid rgba(255,255,255,.06); padding:1.2rem 0; margin-top:1.5rem}
-.footer .link{color:var(--text); text-decoration:underline}
+.hero-copy{padding:0 0 1rem}
+.title{margin:.1rem 0 .4rem;font-size:1.65rem}
+.subtitle{margin:0 0 .6rem;color:#d7e2ff}
+.bullets{margin:.5rem 0 0 1rem;line-height:1.6;color:#cdd7f0}
 
-/* =========================
-   Breakpoints
-   ========================= */
+/* ========== Modal básico ========== */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
+.modal{position:fixed;inset:0;display:none;place-items:center;z-index:50;pointer-events:none}
+.modal.show{display:grid}
+.modal-backdrop.show{display:block}
+.panel{width:min(520px,92vw);background:linear-gradient(180deg, rgba(20,25,40,.95), rgba(10,12,20,.95));
+  border:1px solid var(--border-soft);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.55);padding:1rem 1rem 1.25rem;pointer-events:auto}
+.panel-head{display:flex;align-items:center;justify-content:space-between}
+.tabs{display:flex;gap:.5rem;border:1px solid var(--border-soft);border-radius:10px;padding:.25rem;background:rgba(255,255,255,.05);margin:.6rem 0 0}
+.tab{flex:1;text-align:center;border-radius:8px;padding:.45rem .6rem;cursor:pointer}
+.tab.active{background:rgba(255,255,255,.06);border:1px solid var(--border-soft)}
+.form{display:flex;flex-direction:column;gap:.6rem;margin-top:.8rem}
+.field input{width:100%;border-radius:12px;border:1px solid var(--border-soft);background:rgba(255,255,255,.05);color:#fff;padding:.8rem .9rem}
+.form-actions{display:flex;justify-content:flex-end}
+.divider{height:1px;background:var(--border-soft);margin:1rem 0}
 
-/* >= 640px */
-@media (min-width:640px){
-  .topbar-grid{
-    grid-template-columns: auto 1fr;
-    align-items:center;
-    padding:.7rem 0;
-  }
-  .brand .logo{width:36px;height:36px}
+/* ========== Footer ========== */
+.footer{border-top:1px solid var(--border-soft);margin-top:1rem}
+.footer-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.9rem 0;flex-wrap:wrap}
+
+/* ========== Responsividade extra ========== */
+@media (max-width: 480px){
   .brandtext{font-size:1.05rem}
-  .hero-copy .title{font-size:2rem}
-}
-
-/* >= 900px */
-@media (min-width:900px){
-  .hero-grid{
-    grid-template-columns: 1.1fr 1fr;
-    align-items:start;
-  }
-  .hero{padding:1.25rem 0 1.75rem}
-}
-
-/* Pequenos dispositivos (acomodar cabeçalho) */
-@media (max-width:399px){
-  .brandtext{font-size:.95rem}
-  .logo{width:30px;height:30px}
-  .btn{padding:.5rem .7rem; font-size:.92rem}
-  .credits-inline{font-size:.92rem}
-}
-
-/* Preferência de cores do SO (só melhora contraste) */
-@media (prefers-color-scheme: light){
-  :root{ --text:#0b1220; --muted:#4b5a72; }
-  body{ color:var(--text) }
+  .btn{padding:.65rem .85rem}
+  .btn-primary, #btn-buy-link{font-size:.95rem}
+  .title{font-size:1.35rem}
+  .card-title{font-size:1.15rem}
 }
