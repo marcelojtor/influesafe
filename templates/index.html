@@ -1,34 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
 <main class="container main">
-  <!-- CARD DE UPLOADS (primeiro no mobile) -->
   <section class="upload-card">
     <p class="muted">Bem-vindo ao <strong>INFLUE</strong></p>
     <h2 class="card-title">Faça upload e receba orientação inteligente</h2>
 
     <div class="actions">
-      <!-- FOTO -->
       <form id="form-photo" class="upload" action="/analyze_photo" method="post" enctype="multipart/form-data">
         <input id="photo-input" type="file" name="photo" accept="image/*" hidden />
-        <button type="button" class="btn btn-outline" id="btn-photo" aria-controls="photo-input">
-          Enviar foto (JPG/PNG)
-        </button>
+        <button type="button" class="btn btn-outline" id="btn-photo" aria-controls="photo-input">Enviar foto (JPG/PNG)</button>
       </form>
-
-      <!-- TEXTO -->
       <form id="form-text" class="upload" action="/analyze_text" method="post" enctype="application/json">
-        <button type="button" class="btn btn-outline" id="btn-text">
-          Enviar texto/legenda
-        </button>
+        <button type="button" class="btn btn-outline" id="btn-text">Enviar texto/legenda</button>
       </form>
     </div>
 
     <div class="text-area">
       <label for="textcontent" class="label">Cole sua legenda/texto:</label>
       <textarea id="textcontent" rows="4" placeholder="Digite ou cole aqui..."></textarea>
-      <div class="right">
-        <button type="button" class="btn btn-primary" id="btn-submit-text">Analisar texto</button>
-      </div>
+      <div class="right"><button type="button" class="btn btn-primary" id="btn-submit-text">Analisar texto</button></div>
     </div>
 
     <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
@@ -40,14 +30,10 @@
         <div class="chip"><strong>Score de risco:</strong> <span id="analysis-score">—</span>/100</div>
         <div class="chip"><strong>Tags:</strong> <span id="analysis-tags">—</span></div>
       </div>
-      <div class="recs">
-        <strong>Recomendações:</strong>
-        <ol id="analysis-recs"></ol>
-      </div>
+      <div class="recs"><strong>Recomendações:</strong><ol id="analysis-recs"></ol></div>
     </div>
   </section>
 
-  <!-- Texto de apoio -->
   <section class="hero-copy">
     <h1 class="title">Analise antes de postar.</h1>
     <p class="subtitle">Proteja sua imagem. Maximize seu alcance. IA que orienta você em segundos.</p>
