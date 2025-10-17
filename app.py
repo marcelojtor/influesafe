@@ -28,11 +28,10 @@ from db.models import (
     record_analysis,
     get_user_by_email,
     create_user,
-    # usamos direto o cursor para purchases; para crédito usamos helper:
-    # (já existente no seu models.py)
 )
 from db.models import db_cursor  # para consultas diretas de purchases
 from db.models import add_credits_to_user  # crédito automático pós-pagamento
+from db.models import count_recent_users_by_ip  # <— NOVO: checagem de abuso por IP
 
 # ------ Utils ------
 from utils.security import hash_ip, hash_ua, hash_password, verify_password
@@ -161,10 +160,12 @@ def _seed_admin_if_missing():
         if admin:
             return
         salt, hashed = hash_password("@123456")
+        # ip_hash não é necessário para admin seed
         user_id = create_user(
             email="admin@gmail.com",
             password_hash=f"{salt}${hashed}",
-            credits=0
+            credits=0,
+            ip_hash=None,  # <— compatível com nova assinatura
         )
         # dá muitos créditos
         with db_cursor() as cur:
@@ -340,11 +341,27 @@ def auth_register():
         return jsonify({"ok": False, "error": "Email e senha são obrigatórios."}), 400
     if get_user_by_email(email):
         return jsonify({"ok": False, "error": "Email já cadastrado."}), 409
+
+    # ---------- Mitigação por IP (Etapa 1) ----------
+    iph = _ip_hash()
+    already = count_recent_users_by_ip(iph, days=30)
+    initial_credits = 3 if already == 0 else 0
+    # -----------------------------------------------
+
     salt, hashed = hash_password(password)
-    # Regra nova: 3 créditos próprios no cadastro
-    user_id = create_user(email=email, password_hash=f"{salt}${hashed}", credits=3)
+    user_id = create_user(
+        email=email,
+        password_hash=f"{salt}${hashed}",
+        credits=initial_credits,
+        ip_hash=iph,  # persistimos o ip_hash do cadastro
+    )
     token = _make_token(user_id)
-    return jsonify({"ok": True, "token": token, "user_id": user_id})
+    return jsonify({
+        "ok": True,
+        "token": token,
+        "user_id": user_id,
+        "granted_credits": initial_credits,
+    })
 
 @app.post("/auth/login")
 def auth_login():
