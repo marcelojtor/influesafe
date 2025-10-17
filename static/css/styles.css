@@ -1,4 +1,4 @@
-/* ========== Base ==========
+segue codigo em produção do styles.css em produção reescreva e me traga de volta a logo ja esta no repositório github:   /* ========== Base ==========
    Cores claras no texto, alto contraste no mobile,
    fundo com degradê azul -> preto (volta do original)
 ================================ */
@@ -43,22 +43,8 @@ a:hover{text-decoration:underline}
   flex-wrap:wrap; /* garante quebra bonita no mobile */
 }
 .brand{display:flex;align-items:center;gap:.55rem;color:#fff;text-decoration:none}
-
-/* NOVO: imagem de logo (substitui favicon + texto). 
-   Mantém exatamente 34x34 como solicitado. */
-.logo-img{
-  width:34px;
-  height:34px;
-  display:block;
-  border-radius:12px;        /* mantém “pill” do ícone anterior */
-  object-fit:contain;        /* respeita proporção da arte */
-  background:transparent;    /* deixe transparente; se quiser bloco azul: use var(--primary) */
-}
-
-/* (classes antigas ainda presentes por compat, mas podem não ser usadas) */
 .logo{width:34px;height:34px;border-radius:12px;background:var(--primary);display:grid;place-items:center;font-weight:800}
 .brandtext{font-weight:800;letter-spacing:.5px}
-
 .auth{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
 .pill{font-size:.85rem;color:#dbe7ff;background:rgba(255,255,255,.06);border:1px solid var(--border-soft);padding:.35rem .6rem;border-radius:999px;display:inline-flex;align-items:center;gap:.4rem}
 .muted{color:var(--muted)}
