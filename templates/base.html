@@ -8,14 +8,22 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- FAVICON: usa a logo fornecida -->
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='Logo/influe_logo.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
 </head>
 <body class="theme-dark">
   <header class="topbar">
     <div class="container topbar-row">
+      <!-- BRAND: substitui favicon + texto por imagem única (mesmo tamanho do antigo favicon) -->
       <a class="brand" href="/" aria-label="Ir para início">
-        <div class="logo">I</div>
-        <span class="brandtext">INFLUE</span>
+        <img
+          src="{{ url_for('static', filename='Logo/influe_logo.png') }}"
+          alt="INFLUE"
+          class="logo-img"
+          width="34" height="34"
+          decoding="async" loading="eager"
+        />
       </a>
 
       <nav class="auth">
@@ -114,7 +122,6 @@
   </section>
 
   <script>
-    // Modal + tabs (exatamente como antes; apenas organizado)
     (function(){
       const modal = document.getElementById('auth-modal');
       const backdrop = document.getElementById('auth-backdrop');
