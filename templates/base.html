@@ -34,13 +34,14 @@
   <header class="topbar">
     <div class="container flex between center-v topbar-row">
       <a class="brand flex center-v" href="/" aria-label="Ir para início">
-        <!-- LOGO — usa a imagem do repositório; tamanho fixo 34x34 -->
+        <!-- LOGO — usa caminho absoluto; tamanho fixo 34x34 no desktop e mobile -->
         <img
           class="logo-img"
-          src="{{ url_for('static', filename='Logo/influe_logo.png') }}"
+          src="/static/Logo/influe_logo.png"
           alt="INFLUE"
           width="34" height="34"
           loading="eager" decoding="async"
+          style="border-radius:12px;object-fit:cover"
         />
         <span class="brandtext">INFLUE</span>
       </a>
