@@ -9,74 +9,43 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
-  <style>
-    /* -------- Modal (oculto por padrão) -------- */
-    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:40}
-    .modal{position:fixed;inset:0;display:none;place-items:center;z-index:50;pointer-events:none}
-    .modal.show{display:grid}
-    .modal-backdrop.show{display:block}
-    .modal .panel{width:min(520px,92vw);background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:1rem 1rem 1.25rem;pointer-events:auto}
-    .row{display:flex;gap:.5rem;flex-wrap:wrap}
-    .col{display:flex;flex-direction:column}
-    .field{display:flex;flex-direction:column;gap:.35rem;margin:.5rem 0}
-    .field input{width:100%;border-radius:12px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);padding:.8rem .9rem;font-family:inherit}
-    .divider{height:1px;background:var(--border);margin:1rem 0}
-    .pill{font-size:.85rem;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--border);padding:.3rem .6rem;border-radius:999px}
-    .tag{display:inline-flex;gap:.35rem;align-items:center}
-    .tabs{display:flex;gap:.5rem;border:1px solid var(--border);border-radius:10px;padding:.25rem;background:var(--panel-2);margin:.5rem 0 0}
-    .tab{flex:1;text-align:center;border-radius:8px;padding:.45rem .6rem;cursor:pointer;user-select:none}
-    .tab.active{background:var(--panel);border:1px solid var(--border)}
-    .muted-link{color:var(--muted);text-decoration:underline;cursor:pointer}
-    .hint{font-size:.9rem;color:var(--muted)}
-  </style>
 </head>
-<body>
+<body class="theme-dark">
   <header class="topbar">
-    <div class="container topbar-grid">
-      <!-- Marca -->
+    <div class="container topbar-row">
       <a class="brand" href="/" aria-label="Ir para início">
-        <div class="logo" aria-hidden="true">I</div>
+        <div class="logo">I</div>
         <span class="brandtext">INFLUE</span>
       </a>
 
-      <!-- Estado/Créditos + Ações -->
-      <div class="topbar-actions">
-        <div class="state-line">
-          <span id="user-state" class="pill tag" title="Estado de sessão">
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="#6aa8ff"/></svg>
-            <span id="user-label">Convidado</span>
-          </span>
+      <nav class="auth">
+        <span id="user-state" class="pill tag" title="Estado de sessão">
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="#60a5fa"/></svg>
+          <span id="user-label">Convidado</span>
+        </span>
 
-          <span class="muted credits-inline" aria-label="Créditos da sessão e do usuário">
-            Créditos:
-            <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">
-              Sessão: {{ credits_left|default(0) }} | Usuário: —
-            </strong>
-          </span>
-        </div>
+        <span class="credits muted">
+          Créditos:
+          <strong id="credits-left" data-credits="{{ credits_left|default(0) }}">
+            Sessão: {{ credits_left|default(0) }} | Usuário: —
+          </strong>
+        </span>
 
-        <div class="action-line">
-          <!-- (1) Botão antigo, mantido oculto para compatibilidade com main.js -->
-          <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
-            Comprar 10 créditos
-          </button>
-          <!-- (2) Link real para página de compra -->
-          <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
-            Comprar 10 créditos
-          </a>
+        <!-- mantém o botão antigo, mas oculto (compat JS) -->
+        <button id="btn-purchase" class="btn btn-primary" type="button" style="display:none;">Comprar 10 créditos</button>
+        <!-- link novo visível -->
+        <a id="btn-buy-link" class="btn btn-primary" href="/buy">Comprar 10 créditos</a>
 
-          <!-- Login/Logout -->
-          <button id="btn-open-auth" class="btn btn-ghost" type="button">Entrar / Criar conta</button>
-          <button id="btn-logout" class="btn btn-ghost" type="button" style="display:none;">Sair</button>
-        </div>
-      </div>
+        <button id="btn-open-auth" class="btn btn-ghost" type="button">Entrar / Criar conta</button>
+        <button id="btn-logout" class="btn btn-ghost" type="button" style="display:none;">Sair</button>
+      </nav>
     </div>
   </header>
 
   {% block content %}{% endblock %}
 
   <footer class="footer">
-    <div class="container flex between center-v wrap">
+    <div class="container footer-row">
       <small>© <span id="year"></span> INFLUE. Todos os direitos reservados.</small>
       <small class="muted">Política de Privacidade • <a class="link" href="/privacy">/privacy</a></small>
     </div>
@@ -85,11 +54,11 @@
   <!-- Backdrop do modal -->
   <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
 
-  <!-- Modal de Autenticação (Entrar / Criar conta) -->
+  <!-- Modal de Autenticação -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <h2 id="auth-title" style="margin:.25rem 0 0;">Acessar INFLUE</h2>
+      <div class="panel-head">
+        <h2 id="auth-title">Acessar INFLUE</h2>
         <button id="auth-close" class="btn btn-ghost" type="button" aria-label="Fechar">Fechar</button>
       </div>
 
@@ -99,57 +68,53 @@
       </div>
 
       <!-- ENTRAR -->
-      <form id="form-login" class="col" autocomplete="on">
-        <div class="field">
-          <label for="auth-email" class="muted">E-mail</label>
+      <form id="form-login" class="form">
+        <label class="field">
+          <span class="label">E-mail</span>
           <input id="auth-email" type="email" placeholder="voce@exemplo.com" autocomplete="email" required />
-        </div>
-        <div class="field">
-          <label for="auth-password" class="muted">Senha</label>
+        </label>
+        <label class="field">
+          <span class="label">Senha</span>
           <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" required />
-        </div>
-        <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
+        </label>
+        <div class="form-actions">
           <button id="btn-login" class="btn btn-primary" type="submit">Entrar</button>
         </div>
-        <p class="hint" style="margin:.5rem 0 0;">
-          Ainda não é cadastrado? <span id="link-open-signup" class="muted-link">Crie sua conta agora</span>.
-        </p>
+        <p class="hint">Ainda não é cadastrado? <span id="link-open-signup" class="muted-link">Crie sua conta agora</span>.</p>
       </form>
 
       <!-- CRIAR CONTA -->
-      <form id="form-signup" class="col" style="display:none;" autocomplete="on">
-        <div class="field">
-          <label for="reg-email" class="muted">E-mail</label>
+      <form id="form-signup" class="form" style="display:none;">
+        <label class="field">
+          <span class="label">E-mail</span>
           <input id="reg-email" type="email" placeholder="voce@exemplo.com" autocomplete="email" required />
-        </div>
-        <div class="field">
-          <label for="reg-email2" class="muted">Confirmar e-mail</label>
+        </label>
+        <label class="field">
+          <span class="label">Confirmar e-mail</span>
           <input id="reg-email2" type="email" placeholder="voce@exemplo.com" autocomplete="email" required />
-        </div>
-        <div class="field">
-          <label for="reg-pass" class="muted">Senha</label>
+        </label>
+        <label class="field">
+          <span class="label">Senha</span>
           <input id="reg-pass" type="password" placeholder="Mínimo 6 caracteres" autocomplete="new-password" required />
-        </div>
-        <div class="field">
-          <label for="reg-pass2" class="muted">Confirmar senha</label>
+        </label>
+        <label class="field">
+          <span class="label">Confirmar senha</span>
           <input id="reg-pass2" type="password" placeholder="Repita a senha" autocomplete="new-password" required />
-        </div>
-        <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
+        </label>
+        <div class="form-actions">
           <button id="btn-register" class="btn btn-primary" type="submit">Criar conta</button>
         </div>
-        <p class="hint" style="margin:.5rem 0 0;">
-          Já possui cadastro? <span id="link-open-login" class="muted-link">Entrar</span>.
-        </p>
+        <p class="hint">Já possui cadastro? <span id="link-open-login" class="muted-link">Entrar</span>.</p>
       </form>
 
-      <div id="feedback" class="muted" role="status" aria-live="polite" style="margin-top:.75rem;min-height:1.25rem;"></div>
+      <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
       <div class="divider"></div>
       <small class="muted">Ao continuar, você concorda com nossos termos e a política de privacidade.</small>
     </div>
   </section>
 
   <script>
-    // Controles mínimos do modal + tabs
+    // Modal + tabs (exatamente como antes; apenas organizado)
     (function(){
       const modal = document.getElementById('auth-modal');
       const backdrop = document.getElementById('auth-backdrop');
@@ -163,41 +128,32 @@
       const linkOpenLogin  = document.getElementById('link-open-login');
 
       function showModal(){
-        modal.classList.add('show');
-        backdrop.classList.add('show');
-        modal.setAttribute('aria-hidden','false');
-        backdrop.setAttribute('aria-hidden','false');
-        setTimeout(()=>document.getElementById('auth-email')?.focus(), 50);
+        modal.classList.add('show'); backdrop.classList.add('show');
+        modal.setAttribute('aria-hidden','false'); backdrop.setAttribute('aria-hidden','false');
+        setTimeout(()=>document.getElementById('auth-email')?.focus(), 40);
       }
       function hideModal(){
-        modal.classList.remove('show');
-        backdrop.classList.remove('show');
-        modal.setAttribute('aria-hidden','true');
-        backdrop.setAttribute('aria-hidden','true');
+        modal.classList.remove('show'); backdrop.classList.remove('show');
+        modal.setAttribute('aria-hidden','true'); backdrop.setAttribute('aria-hidden','true');
       }
-      function setTab(mode) {
+      function setTab(mode){
         const isLogin = mode === 'login';
         tabLogin.classList.toggle('active', isLogin);
         tabSignup.classList.toggle('active', !isLogin);
-        tabLogin.setAttribute('aria-selected', isLogin ? 'true':'false');
-        tabSignup.setAttribute('aria-selected', !isLogin ? 'true':'false');
         formLogin.style.display  = isLogin ? '' : 'none';
         formSignup.style.display = isLogin ? 'none' : '';
-        if (isLogin) document.getElementById('auth-email')?.focus();
-        else document.getElementById('reg-email')?.focus();
+        (isLogin ? document.getElementById('auth-email') : document.getElementById('reg-email'))?.focus();
       }
 
       openBtn?.addEventListener('click', showModal);
       closeBtn?.addEventListener('click', hideModal);
       backdrop?.addEventListener('click', hideModal);
       document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') hideModal(); });
-
       tabLogin?.addEventListener('click', ()=>setTab('login'));
       tabSignup?.addEventListener('click', ()=>setTab('signup'));
       linkOpenSignup?.addEventListener('click', ()=>setTab('signup'));
-      linkOpenLogin?.addEventListener('click',  ()=>setTab('login'));
+      linkOpenLogin?.addEventListener('click', ()=>setTab('login'));
 
-      // Expor helpers para main.js
       window.__influe_show_auth__ = showModal;
       window.__influe_hide_auth__ = hideModal;
       window.__influe_set_auth_tab__ = setTab;
