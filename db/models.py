@@ -3,9 +3,11 @@
 # Mudanças chave:
 # - UPSERT ao criar sessão (Postgres: ON CONFLICT DO NOTHING; SQLite: INSERT OR IGNORE)
 # - Logs leves para diagnóstico de criação de sessão
+# - users.ip_hash para mitigação de abuso (crédito só para 1º cadastro por IP/30d)
+# - helper count_recent_users_by_ip
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_URL = os.environ.get("DATABASE_URL", "sqlite:///influe.db")
 _IS_PG = DB_URL.startswith("postgresql://") or DB_URL.startswith("postgres://")
@@ -76,6 +78,7 @@ DDL_SQLITE = [
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         credits_remaining INTEGER DEFAULT 0,
+        ip_hash TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -120,6 +123,7 @@ DDL_PG = [
         email TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         credits_remaining INTEGER DEFAULT 0,
+        ip_hash TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -176,46 +180,72 @@ class User:
 
 def get_user_by_email(email: str):
     with db_cursor() as cur:
-        cur.execute("SELECT * FROM users WHERE email = %s" if _IS_PG else "SELECT * FROM users WHERE email = ?", (email,))
+        cur.execute(
+            "SELECT * FROM users WHERE email = %s" if _IS_PG else
+            "SELECT * FROM users WHERE email = ?",
+            (email,),
+        )
         row = cur.fetchone()
         if row:
             return User(row["id"], row["email"], row["password_hash"], row["credits_remaining"])
         return None
 
-def create_user(email: str, password_hash: str, credits: int = 0) -> int:
+def count_recent_users_by_ip(ip_hash: str, days: int = 30) -> int:
     """
-    Cria usuário com saldo 'credits' informado.
-    (No seu fluxo novo, vamos chamar com credits=3 a partir do app.py)
+    Retorna quantos usuários possuem o mesmo ip_hash criados nos últimos 'days' dias.
+    Usado para conceder créditos apenas ao 1º cadastro por IP no período.
+    """
+    if not ip_hash:
+        return 0
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    with db_cursor() as cur:
+        cur.execute(
+            (
+                "SELECT COUNT(*) AS n FROM users WHERE ip_hash = %s AND created_at >= %s"
+            ) if _IS_PG else
+            (
+                "SELECT COUNT(*) AS n FROM users WHERE ip_hash = ? AND created_at >= ?"
+            ),
+            (ip_hash, cutoff),
+        )
+        row = cur.fetchone()
+        return int(row["n"] if row and "n" in row else 0)
+
+def create_user(email: str, password_hash: str, credits: int = 0, ip_hash: str | None = None) -> int:
+    """
+    Cria usuário com saldo 'credits' informado e persiste ip_hash (para mitigação).
     """
     with db_cursor() as cur:
         if _IS_PG:
             cur.execute(
-                "INSERT INTO users (email, password_hash, credits_remaining) VALUES (%s, %s, %s) RETURNING id",
-                (email, password_hash, credits),
+                "INSERT INTO users (email, password_hash, credits_remaining, ip_hash) VALUES (%s, %s, %s, %s) RETURNING id",
+                (email, password_hash, credits, ip_hash),
             )
             new_id = cur.fetchone()["id"]
-            print(f"[DB] create_user ok email={email} credits={credits}")
+            print(f"[DB] create_user ok email={email} credits={credits} iph={bool(ip_hash)}")
             return new_id
         else:
             cur.execute(
-                "INSERT INTO users (email, password_hash, credits_remaining) VALUES (?, ?, ?)",
-                (email, password_hash, credits),
+                "INSERT INTO users (email, password_hash, credits_remaining, ip_hash) VALUES (?, ?, ?, ?)",
+                (email, password_hash, credits, ip_hash),
             )
             new_id = cur.lastrowid
-            print(f"[DB] create_user ok email={email} credits={credits}")
+            print(f"[DB] create_user ok email={email} credits={credits} iph={bool(ip_hash)}")
             return new_id
 
 def consume_user_credit_atomic(user_id: int) -> bool:
     with db_cursor() as cur:
         cur.execute(
-            "SELECT credits_remaining FROM users WHERE id = %s" if _IS_PG else "SELECT credits_remaining FROM users WHERE id = ?",
+            "SELECT credits_remaining FROM users WHERE id = %s" if _IS_PG else
+            "SELECT credits_remaining FROM users WHERE id = ?",
             (user_id,),
         )
         row = cur.fetchone()
         if not row or (row["credits_remaining"] or 0) <= 0:
             return False
         cur.execute(
-            "UPDATE users SET credits_remaining = credits_remaining - 1 WHERE id = %s" if _IS_PG else "UPDATE users SET credits_remaining = credits_remaining - 1 WHERE id = ?",
+            "UPDATE users SET credits_remaining = credits_remaining - 1 WHERE id = %s" if _IS_PG else
+            "UPDATE users SET credits_remaining = credits_remaining - 1 WHERE id = ?",
             (user_id,),
         )
         return True
@@ -265,7 +295,8 @@ def get_or_create_session(session_id: str, ip_hash: str, ua_hash: str, free_cred
 def consume_session_credit_atomic(session_id: str) -> bool:
     with db_cursor() as cur:
         cur.execute(
-            "SELECT credits_temp_remaining FROM sessions WHERE session_id = %s" if _IS_PG else "SELECT credits_temp_remaining FROM sessions WHERE session_id = ?",
+            "SELECT credits_temp_remaining FROM sessions WHERE session_id = %s" if _IS_PG else
+            "SELECT credits_temp_remaining FROM sessions WHERE session_id = ?",
             (session_id,),
         )
         row = cur.fetchone()
@@ -296,7 +327,7 @@ def record_analysis(user_id, session_id, a_type, meta, score_risk, tags):
         )
 
 # ==========================================================
-# Compras (Mock)
+# Compras (Mock / Webhook)
 # ==========================================================
 def record_purchase(user_id: int, package: int, amount: float, status: str, provider_ref: str):
     with db_cursor() as cur:
