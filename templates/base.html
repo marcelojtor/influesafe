@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>INFLUE — Assistente de Imagem & Engajamento</title>
   <meta name="description" content="Analise sua foto ou texto antes de postar. Proteja sua imagem e alavanque seu engajamento." />
+
+  <!-- Favicon / App icons (usa o mesmo arquivo do logo) -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/logo/influe_logo.png" />
+  <link rel="apple-touch-icon" href="/static/logo/influe_logo.png" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -34,10 +39,10 @@
   <header class="topbar">
     <div class="container flex between center-v topbar-row">
       <a class="brand flex center-v" href="/" aria-label="Ir para início">
-        <!-- LOGO — usa caminho absoluto; tamanho fixo 34x34 no desktop e mobile -->
+        <!-- LOGO: agora com caminho em minúsculas -->
         <img
           class="logo-img"
-          src="/static/Logo/influe_logo.png"
+          src="/static/logo/influe_logo.png"
           alt="INFLUE"
           width="34" height="34"
           loading="eager" decoding="async"
@@ -61,11 +66,11 @@
           </strong>
         </span>
 
-        <!-- (1) Botão antigo oculto (compat com main.js) -->
+        <!-- Botão legado oculto (compat com main.js) -->
         <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
           Comprar 10 créditos
         </button>
-        <!-- (2) Link para página de compra -->
+        <!-- Link visível de compra -->
         <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
           Comprar 10 créditos
         </a>
@@ -89,7 +94,7 @@
   <!-- Backdrop do modal -->
   <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
 
-  <!-- Modal de Autenticação (Entrar / Criar conta) -->
+  <!-- Modal de Autenticação -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
       <div class="flex between center-v">
@@ -113,9 +118,11 @@
           <label for="auth-password" class="muted">Senha</label>
           <input id="auth-password" type="password" placeholder="••••••••" autocomplete="current-password" required />
         </div>
+
         <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
           <button id="btn-login" class="btn btn-primary" type="submit">Entrar</button>
         </div>
+
         <p class="hint" style="margin:.5rem 0 0;">
           Ainda não é cadastrado? <span id="link-open-signup" class="muted-link">Crie sua conta agora</span>.
         </p>
@@ -139,9 +146,11 @@
           <label for="reg-pass2" class="muted">Confirmar senha</label>
           <input id="reg-pass2" type="password" placeholder="Repita a senha" autocomplete="new-password" required />
         </div>
+
         <div class="row" style="justify-content:flex-end;margin-top:.5rem;">
           <button id="btn-register" class="btn btn-primary" type="submit">Criar conta</button>
         </div>
+
         <p class="hint" style="margin:.5rem 0 0;">
           Já possui cadastro? <span id="link-open-login" class="muted-link">Entrar</span>.
         </p>
