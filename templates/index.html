@@ -13,6 +13,26 @@
         <button type="button" class="btn btn-outline" id="btn-photo" aria-controls="photo-input">
           Enviar foto (JPG/PNG)
         </button>
+
+        <!-- Campo de intenção (opcional) -->
+        <div class="field" style="margin-top:.75rem;">
+          <label for="intent" class="label">
+            O que você quer que o INFLUE responda? <span class="muted">(até 140 caracteres)</span>
+          </label>
+          <input
+            id="intent"
+            name="intent"
+            type="text"
+            maxlength="140"
+            placeholder="Ex.: Essa foto é adequada para o LinkedIn?"
+            aria-describedby="intent-help intent-counter"
+            autocomplete="off"
+          />
+          <div class="flex between center-v" style="margin-top:.25rem;">
+            <small id="intent-help" class="muted">Opcional. Uma frase curta orienta a análise da IA.</small>
+            <small id="intent-counter" class="muted">0/140</small>
+          </div>
+        </div>
       </form>
 
       <!-- TEXTO -->
@@ -58,4 +78,17 @@
     </ul>
   </section>
 </main>
+
+<!-- Script (local) apenas para o contador de caracteres do campo de intenção -->
+<script>
+  (function () {
+    const intent = document.getElementById('intent');
+    const counter = document.getElementById('intent-counter');
+    if (intent && counter) {
+      const update = () => { counter.textContent = (intent.value || '').length + '/140'; };
+      intent.addEventListener('input', update);
+      update();
+    }
+  })();
+</script>
 {% endblock %}
