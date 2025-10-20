@@ -81,6 +81,24 @@ rate_limiter = SimpleRateLimiter(
     min_interval_s=RATE_LIMIT_MIN_INTERVAL_MS / 1000.0,
 )
 
+# ===== Helpers de resposta JSON de erro (NOVO) =====
+def _json_error(status: int, msg: str):
+    return jsonify({"ok": False, "error": msg}), status
+
+def _wants_json() -> bool:
+    """
+    Identifica rotas de API que devem sempre responder JSON.
+    Evita retornar HTML 500 para o front (mobile/desktop) que usa fetch().
+    """
+    path = (request.path or "").lower()
+    if path.startswith((
+        "/analyze_", "/auth/", "/credits_status", "/gate/",
+        "/purchase", "/webhooks/", "/user/"
+    )):
+        return True
+    accept = request.headers.get("Accept", "")
+    return "application/json" in accept
+
 # ==========================================================
 # Compat SQLite x Postgres (para placeholders em logs locais)
 # ==========================================================
@@ -175,6 +193,20 @@ def _seed_admin_if_missing():
         print(f"[BOOT][WARN] Seed admin falhou: {e}")
 
 _seed_admin_if_missing()
+
+# ==========================================================
+# Handler global de exceções para APIs (NOVO)
+# ==========================================================
+@app.errorhandler(Exception)
+def _handle_unexpected_error(e):
+    # Para páginas HTML (/, /buy, etc.), mantenha a página de erro padrão.
+    if not _wants_json():
+        raise e
+    try:
+        print(f"[ERR] {request.method} {request.path}: {repr(e)}")
+    except Exception:
+        pass
+    return _json_error(500, "Erro interno ao processar sua solicitação.")
 
 # ==========================================================
 # Rota admin para diagnosticar a conexão / criar schema
@@ -437,96 +469,103 @@ def _ensure_session() -> Tuple[str, bool]:
 def analyze_photo(user_id: Optional[int]):
     session_id, created_now = _ensure_session()
 
-    # arquivo (aceita "file" ou "photo")
-    file = request.files.get("file") or request.files.get("photo")
-    if not file or not file.filename:
-        return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
-
-    filename = secure_filename(file.filename.lower())
-    if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
-        return jsonify({"ok": False, "error": "Formato inválido. Use JPG/PNG."}), 400
-
-    file.seek(0, os.SEEK_END)
-    size_mb = file.tell() / (1024 * 1024)
-    file.seek(0)
-    if size_mb > MAX_UPLOAD_MB:
-        return jsonify({"ok": False, "error": f"Arquivo excede {MAX_UPLOAD_MB}MB."}), 400
-
-    # NOVO: intenção opcional do usuário (até 140 chars)
-    # compatível com o front que envia 'intent' em FormData
-    intent = (request.form.get("intent") or "").strip()[:140] or None
-
-    session_dir = os.path.join(STORAGE_DIR, session_id)
-    os.makedirs(session_dir, exist_ok=True)
-    save_path = os.path.join(session_dir, filename)
-    file.save(save_path)
-
-    # consumo de crédito (usuário > sessão)
-    ok = False
-    if user_id:
-        ok = consume_user_credit_atomic(user_id)
-    if not ok:
-        ok = consume_session_credit_atomic(session_id)
-    if not ok:
-        return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
-
-    # Chamada à IA com fallback de compatibilidade de assinatura
     try:
-        # Preferimos 'instruction' (mais semântica). Se o cliente aceitar, ótimo.
-        result = ai_client.analyze_image(save_path, instruction=intent)
-    except TypeError:
+        # arquivo (aceita "file" ou "photo")
+        file = request.files.get("file") or request.files.get("photo")
+        if not file or not file.filename:
+            return _json_error(400, "Nenhuma imagem enviada.")
+
+        filename = secure_filename(file.filename.lower())
+        if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
+            return _json_error(400, "Formato inválido. Use JPG/PNG.")
+
+        file.seek(0, os.SEEK_END)
+        size_mb = file.tell() / (1024 * 1024)
+        file.seek(0)
+        if size_mb > MAX_UPLOAD_MB:
+            return _json_error(400, f"Arquivo excede {MAX_UPLOAD_MB}MB.")
+
+        # Intenção opcional do usuário (até 140 chars) — enviada no FormData
+        intent = (request.form.get("intent") or "").strip()[:140] or None
+
+        session_dir = os.path.join(STORAGE_DIR, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        save_path = os.path.join(session_dir, filename)
+        file.save(save_path)
+
+        # consumo de crédito (usuário > sessão)
+        ok = False
+        if user_id:
+            ok = consume_user_credit_atomic(user_id)
+        if not ok:
+            ok = consume_session_credit_atomic(session_id)
+        if not ok:
+            return _json_error(402, "Sem créditos disponíveis. Faça login e/ou compre créditos.")
+
+        # Chamada à IA com fallback de compatibilidade de assinatura
         try:
-            # Alternativa comum em alguns clientes
-            result = ai_client.analyze_image(save_path, intent=intent)
+            result = ai_client.analyze_image(save_path, instruction=intent)
         except TypeError:
-            # Compat total: sem parâmetro extra
-            result = ai_client.analyze_image(save_path)
+            try:
+                result = ai_client.analyze_image(save_path, intent=intent)
+            except TypeError:
+                result = ai_client.analyze_image(save_path)
 
-    if not result.get("ok"):
-        return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
+        if not isinstance(result, dict) or not result.get("ok"):
+            err = (result or {}).get("error", "Falha na análise de IA.")
+            return _json_error(502, err)
 
-    # meta inclui a intenção (se houver) para auditoria
-    meta = json.dumps({"filename": filename, **({"intent": intent} if intent else {})})
-    tags = json.dumps(result.get("tags", []))
-    score = int(result.get("score_risk", 0))
-    record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
+        # meta inclui a intenção (se houver) para auditoria
+        meta = json.dumps({"filename": filename, **({"intent": intent} if intent else {})})
+        tags = json.dumps(result.get("tags", []))
+        score = int(result.get("score_risk", 0))
+        record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
 
-    resp = make_response(jsonify({"ok": True, "analysis": result}))
-    if created_now:
-        _ensure_session_cookie(resp, session_id)
-    return resp
+        resp = make_response(jsonify({"ok": True, "analysis": result}))
+        if created_now:
+            _ensure_session_cookie(resp, session_id)
+        return resp
+
+    except Exception as e:
+        print(f"[ERR][/analyze_photo] {repr(e)}")
+        return _json_error(500, "Não foi possível concluir a análise da foto.")
 
 @app.post("/analyze_text")
 @rate_limit
 @require_auth_maybe
 def analyze_text(user_id: Optional[int]):
     session_id, created_now = _ensure_session()
-    data = request.get_json(silent=True) or {}
-    text = (data.get("text") or "").strip()
-    if not text:
-        return jsonify({"ok": False, "error": "Texto vazio."}), 400
+    try:
+        data = request.get_json(silent=True) or {}
+        text = (data.get("text") or "").strip()
+        if not text:
+            return _json_error(400, "Texto vazio.")
 
-    ok = False
-    if user_id:
-        ok = consume_user_credit_atomic(user_id)
-    if not ok:
-        ok = consume_session_credit_atomic(session_id)
-    if not ok:
-        return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
+        ok = False
+        if user_id:
+            ok = consume_user_credit_atomic(user_id)
+        if not ok:
+            ok = consume_session_credit_atomic(session_id)
+        if not ok:
+            return _json_error(402, "Sem créditos disponíveis. Faça login e/ou compre créditos.")
 
-    result = ai_client.analyze_text(text)
-    if not result.get("ok"):
-        return jsonify({"ok": False, "error": "Falha na análise de IA."}), 502
+        result = ai_client.analyze_text(text)
+        if not isinstance(result, dict) or not result.get("ok"):
+            return _json_error(502, "Falha na análise de IA.")
 
-    meta = json.dumps({"chars": len(text)})
-    tags = json.dumps(result.get("tags", []))
-    score = int(result.get("score_risk", 0))
-    record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
+        meta = json.dumps({"chars": len(text)})
+        tags = json.dumps(result.get("tags", []))
+        score = int(result.get("score_risk", 0))
+        record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
 
-    resp = make_response(jsonify({"ok": True, "analysis": result}))
-    if created_now:
-        _ensure_session_cookie(resp, session_id)
-    return resp
+        resp = make_response(jsonify({"ok": True, "analysis": result}))
+        if created_now:
+            _ensure_session_cookie(resp, session_id)
+        return resp
+
+    except Exception as e:
+        print(f"[ERR][/analyze_text] {repr(e)}")
+        return _json_error(500, "Não foi possível concluir a análise do texto.")
 
 # ==========================================================
 # Pagamentos (mock + webhook PagBank)
