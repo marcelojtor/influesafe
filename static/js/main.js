@@ -47,6 +47,9 @@
   const elTextarea = $("#textcontent");
   const elBtnSubmitText = $("#btn-submit-text");
 
+  // Novo campo de intenção (até 140 chars)
+  const elIntent = $("#intent");
+
   // Saída de análise
   const elOut = $("#analysis-output");
   const elOutSummary = $("#analysis-summary");
@@ -368,6 +371,14 @@
 
     const fd = new FormData();
     fd.append("photo", compressed, compressed.name);
+
+    // NOVO: inclui a intenção do usuário (até 140 chars) se houver
+    if (elIntent && typeof elIntent.value === "string") {
+      const intentValue = (elIntent.value || "").trim().slice(0, 140);
+      if (intentValue) {
+        fd.append("intent", intentValue);
+      }
+    }
 
     setFeedback("Enviando para análise...");
     try {
