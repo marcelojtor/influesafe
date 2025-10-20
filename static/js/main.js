@@ -56,13 +56,20 @@
 
   // Seleciona SEMPRE o feedback do CARD (não o do modal)
   function pickMainFeedback() {
-    const list = document.querySelectorAll("#feedback");
-    if (list.length === 0) return null;
-    if (list.length === 1) return list[0];
-    for (const el of list) {
+    // ⚠️ Compat com redesign: aceitar #page-feedback (novo) e #feedback (legado)
+    const candidates = [
+      document.querySelector("#page-feedback"),
+      document.querySelector("#feedback")
+    ].filter(Boolean);
+
+    if (candidates.length) return candidates[0];
+
+    // fallback defensivo: evitar capturar feedback do modal
+    const all = Array.from(document.querySelectorAll("#feedback, #page-feedback"));
+    for (const el of all) {
       if (!el.closest("#auth-modal")) return el;
     }
-    return list[0];
+    return null;
   }
   let elFeedback = pickMainFeedback();
 
@@ -420,6 +427,11 @@
   // -----------------------------
   // /analyze_photo
   // -----------------------------
+  const elBtnTextOpen = document.getElementById("btn-text"); // apenas abre a área de texto (se existir)
+  elBtnTextOpen?.addEventListener("click", () => {
+    document.getElementById("textcontent")?.focus();
+  });
+
   elBtnPhoto?.addEventListener("click", () => elInputPhoto?.click());
 
   elInputPhoto?.addEventListener("change", async () => {
