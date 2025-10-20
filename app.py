@@ -436,22 +436,32 @@ def _ensure_session() -> Tuple[str, bool]:
 @require_auth_maybe
 def analyze_photo(user_id: Optional[int]):
     session_id, created_now = _ensure_session()
+
+    # arquivo (aceita "file" ou "photo")
     file = request.files.get("file") or request.files.get("photo")
     if not file or not file.filename:
         return jsonify({"ok": False, "error": "Nenhuma imagem enviada."}), 400
+
     filename = secure_filename(file.filename.lower())
     if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
         return jsonify({"ok": False, "error": "Formato inválido. Use JPG/PNG."}), 400
+
     file.seek(0, os.SEEK_END)
     size_mb = file.tell() / (1024 * 1024)
     file.seek(0)
     if size_mb > MAX_UPLOAD_MB:
         return jsonify({"ok": False, "error": f"Arquivo excede {MAX_UPLOAD_MB}MB."}), 400
+
+    # NOVO: intenção opcional do usuário (até 140 chars)
+    # compatível com o front que envia 'intent' em FormData
+    intent = (request.form.get("intent") or "").strip()[:140] or None
+
     session_dir = os.path.join(STORAGE_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
     save_path = os.path.join(session_dir, filename)
     file.save(save_path)
 
+    # consumo de crédito (usuário > sessão)
     ok = False
     if user_id:
         ok = consume_user_credit_atomic(user_id)
@@ -460,11 +470,23 @@ def analyze_photo(user_id: Optional[int]):
     if not ok:
         return jsonify({"ok": False, "error": "Sem créditos disponíveis. Faça login e/ou compre créditos."}), 402
 
-    result = ai_client.analyze_image(save_path)
+    # Chamada à IA com fallback de compatibilidade de assinatura
+    try:
+        # Preferimos 'instruction' (mais semântica). Se o cliente aceitar, ótimo.
+        result = ai_client.analyze_image(save_path, instruction=intent)
+    except TypeError:
+        try:
+            # Alternativa comum em alguns clientes
+            result = ai_client.analyze_image(save_path, intent=intent)
+        except TypeError:
+            # Compat total: sem parâmetro extra
+            result = ai_client.analyze_image(save_path)
+
     if not result.get("ok"):
         return jsonify({"ok": False, "error": result.get("error", "Falha na análise de IA.")}), 502
 
-    meta = json.dumps({"filename": filename})
+    # meta inclui a intenção (se houver) para auditoria
+    meta = json.dumps({"filename": filename, **({"intent": intent} if intent else {})})
     tags = json.dumps(result.get("tags", []))
     score = int(result.get("score_risk", 0))
     record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
