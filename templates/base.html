@@ -22,7 +22,10 @@
     <div class="container flex between center-v topbar-row">
       <a class="brand flex center-v" href="/" aria-label="Ir para início">
         <img class="logo-img" src="/static/logo/influe_logo.png" alt="INFLUE" width="34" height="34" loading="eager" decoding="async" />
-        <span class="brandtext">INFLUE</span>
+        <span class="brandtext" style="display:flex;flex-direction:column;line-height:1;">
+          <strong>INFLUE</strong>
+          <small class="muted" style="font-size:.75rem;margin-top:.15rem;">Bem-vindo ao INFLUE</small>
+        </span>
       </a>
 
       <nav class="auth flex wrap center-v" style="gap:.5rem;">
@@ -123,7 +126,6 @@
         </p>
       </form>
 
-      <!-- ALTERADO: ID único para feedback do modal -->
       <div id="auth-feedback" class="muted" role="status" aria-live="polite" style="min-height:1.25rem;"></div>
       <div class="divider"></div>
       <small class="muted">Ao continuar, você concorda com nossos termos e a política de privacidade.</small>
