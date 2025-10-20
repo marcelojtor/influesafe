@@ -2,52 +2,42 @@
 {% block content %}
 <main class="container main">
   <section class="upload-card">
-    <p class="muted">Bem-vindo ao <strong>INFLUE</strong></p>
-    <h2 class="card-title">Faça upload e receba orientação inteligente</h2>
+    <!-- Frase interna REMOVIDA conforme solicitado -->
+    <h2 class="card-title">Maximize seu alcance. INFLUE é a IA que orienta você em segundos.</h2>
 
     <div class="actions">
       <form id="form-photo" class="upload" action="/analyze_photo" method="post" enctype="multipart/form-data">
         <input id="photo-input" type="file" name="photo" accept="image/*" hidden />
         <button type="button" class="btn btn-outline" id="btn-photo" aria-controls="photo-input">
-          Enviar foto (JPG/PNG)
+          Envie sua foto agora
         </button>
 
+        <!-- Preview da foto + botão LIMPAR -->
+        <div id="photo-preview-wrap" style="display:none;margin-top:.75rem;">
+          <img id="photo-preview" alt="Pré-visualização da foto" style="max-width:100%;height:auto;border-radius:12px;border:1px solid rgba(148,163,184,.25);" />
+          <div class="right" style="margin-top:.5rem;">
+            <button type="button" class="btn btn-ghost" id="btn-clear-photo">LIMPAR</button>
+          </div>
+        </div>
+
+        <!-- Campo de intenção: apenas o INPUT, sem o label/frase longa -->
         <div class="field" style="margin-top:.75rem;">
-          <label for="intent" class="label">
-            O que você quer que o INFLUE responda? <span class="muted">(até 140 caracteres)</span>
-          </label>
           <input
             id="intent"
             name="intent"
             type="text"
             maxlength="140"
-            placeholder="Ex.: Essa foto é adequada para o LinkedIn?"
-            aria-describedby="intent-help intent-counter"
+            placeholder="O que você quer saber da sua foto? Pergunte qualquer coisa."
             autocomplete="off"
           />
-          <div class="flex between center-v" style="margin-top:.25rem;">
-            <small id="intent-help" class="muted">Opcional. Uma frase curta orienta a análise da IA.</small>
-            <small id="intent-counter" class="muted">0/140</small>
-          </div>
         </div>
       </form>
 
-      <form id="form-text" class="upload" action="/analyze_text" method="post" enctype="application/json">
-        <button type="button" class="btn btn-outline" id="btn-text">
-          Enviar texto/legenda
-        </button>
-      </form>
+      <!-- Botão de texto/área REMOVIDOS conforme solicitado -->
     </div>
 
-    <div class="text-area">
-      <label for="textcontent" class="label">Cole sua legenda/texto:</label>
-      <textarea id="textcontent" rows="4" placeholder="Digite ou cole aqui..."></textarea>
-      <div class="right">
-        <button type="button" class="btn btn-primary" id="btn-submit-text">Analisar texto</button>
-      </div>
-    </div>
+    <!-- Área de texto REMOVIDA conforme solicitado -->
 
-    <!-- ALTERADO: ID exclusivo para feedback da página -->
     <div id="page-feedback" class="feedback" role="status" aria-live="polite"></div>
 
     <div id="analysis-output" class="analysis" style="display:none;">
@@ -69,21 +59,11 @@
     <p class="subtitle">Proteja sua imagem. Maximize seu alcance. IA que orienta você em segundos.</p>
     <ul class="bullets">
       <li>Créditos do usuário para uso justo.</li>
-      <li>Envie uma <strong>foto</strong> ou uma <strong>legenda/texto</strong>.</li>
+      <li>Envie uma <strong>foto</strong> e receba orientação.</li>
       <li>Resultado imediato com <em>score</em>, <em>tags</em> e <em>recomendações</em>.</li>
     </ul>
   </section>
 </main>
 
-<script>
-  (function () {
-    const intent = document.getElementById('intent');
-    const counter = document.getElementById('intent-counter');
-    if (intent && counter) {
-      const update = () => { counter.textContent = (intent.value || '').length + '/140'; };
-      intent.addEventListener('input', update);
-      update();
-    }
-  })();
-</script>
+<!-- Script auxiliar do contador REMOVIDO, já que não há mais contador -->
 {% endblock %}
