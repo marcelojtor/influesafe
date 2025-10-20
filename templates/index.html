@@ -1,20 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <main class="container main">
-  <!-- CARD DE UPLOADS (primeiro no mobile) -->
   <section class="upload-card">
     <p class="muted">Bem-vindo ao <strong>INFLUE</strong></p>
     <h2 class="card-title">Faça upload e receba orientação inteligente</h2>
 
     <div class="actions">
-      <!-- FOTO -->
       <form id="form-photo" class="upload" action="/analyze_photo" method="post" enctype="multipart/form-data">
         <input id="photo-input" type="file" name="photo" accept="image/*" hidden />
         <button type="button" class="btn btn-outline" id="btn-photo" aria-controls="photo-input">
           Enviar foto (JPG/PNG)
         </button>
 
-        <!-- Campo de intenção (opcional) -->
         <div class="field" style="margin-top:.75rem;">
           <label for="intent" class="label">
             O que você quer que o INFLUE responda? <span class="muted">(até 140 caracteres)</span>
@@ -35,7 +32,6 @@
         </div>
       </form>
 
-      <!-- TEXTO -->
       <form id="form-text" class="upload" action="/analyze_text" method="post" enctype="application/json">
         <button type="button" class="btn btn-outline" id="btn-text">
           Enviar texto/legenda
@@ -51,7 +47,8 @@
       </div>
     </div>
 
-    <div id="feedback" class="feedback" role="status" aria-live="polite"></div>
+    <!-- ALTERADO: ID exclusivo para feedback da página -->
+    <div id="page-feedback" class="feedback" role="status" aria-live="polite"></div>
 
     <div id="analysis-output" class="analysis" style="display:none;">
       <h3>Resultado da análise</h3>
@@ -67,7 +64,6 @@
     </div>
   </section>
 
-  <!-- Cópia de apoio -->
   <section class="hero-copy">
     <h1 class="title">Analise antes de postar.</h1>
     <p class="subtitle">Proteja sua imagem. Maximize seu alcance. IA que orienta você em segundos.</p>
@@ -79,7 +75,6 @@
   </section>
 </main>
 
-<!-- Script (local) apenas para o contador de caracteres do campo de intenção -->
 <script>
   (function () {
     const intent = document.getElementById('intent');
