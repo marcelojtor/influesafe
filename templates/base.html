@@ -16,6 +16,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
 </head>
 <body class="theme-dark">
+  <a class="skip-link" href="#conteudo-principal">Ir para o conteúdo</a>
+
   <header class="topbar">
     <div class="container flex between center-v topbar-row">
       <a class="brand flex center-v" href="/" aria-label="Ir para início">
@@ -52,7 +54,12 @@
     </div>
   </header>
 
-  {% block content %}{% endblock %}
+  <!-- Slot opcional para hero/banner (não quebra páginas atuais) -->
+  {% block hero %}{% endblock %}
+
+  <main id="conteudo-principal" class="main">
+    {% block content %}{% endblock %}
+  </main>
 
   <footer class="footer">
     <div class="container flex between center-v wrap footer-row">
@@ -161,9 +168,14 @@
       linkOpenSignup?.addEventListener('click', ()=>setTab('signup'));
       linkOpenLogin?.addEventListener('click',  ()=>setTab('login'));
 
+      // expõe helpers
       window.__influe_show_auth__ = showModal;
       window.__influe_hide_auth__ = hideModal;
       window.__influe_set_auth_tab__ = setTab;
+
+      // ano do rodapé
+      const y = document.getElementById('year');
+      if (y) y.textContent = new Date().getFullYear();
     })();
   </script>
 
