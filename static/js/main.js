@@ -5,6 +5,7 @@
  * - 3 créditos de SESSÃO sem barreira; exigir login só ao esgotar ou ao comprar.
  * - Botões do modal: Entrar e Criar conta funcionais.
  * - Fluxo de análise (foto/texto), consumo de crédito e compra.
+ * - Spinner + barra de progresso durante processamento.
  */
 
 (function () {
@@ -30,7 +31,6 @@
   const elAuthEmail = $("#auth-email");
   const elAuthPassword = $("#auth-password");
   const formLogin = $("#form-login");
-  const elBtnLogin = $("#btn-login");
 
   // Modal (campos e botões — CRIAR CONTA)
   const formSignup = $("#form-signup");
@@ -38,16 +38,27 @@
   const elRegEmail2 = $("#reg-email2");
   const elRegPass = $("#reg-pass");
   const elRegPass2 = $("#reg-pass2");
-  const elBtnRegister = $("#btn-register");
 
   // Home / análise
-  const elFeedback = $("#feedback");
+  // ATENÇÃO: pode haver DOIS #feedback (um no modal). Pegamos o do CARD de upload.
+  function pickMainFeedback() {
+    const list = document.querySelectorAll("#feedback");
+    if (list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    // Prefere o que NÃO está dentro do modal
+    for (const el of list) {
+      if (!el.closest("#auth-modal")) return el;
+    }
+    return list[0];
+  }
+  let elFeedback = pickMainFeedback();
+
   const elInputPhoto = $("#photo-input");
   const elBtnPhoto = $("#btn-photo");
   const elTextarea = $("#textcontent");
   const elBtnSubmitText = $("#btn-submit-text");
 
-  // Novo campo de intenção (até 140 chars)
+  // Novo campo de intenção (até 140 chars). Se não existir, ignoramos.
   const elIntent = $("#intent");
 
   // Saída de análise
@@ -63,20 +74,118 @@
   const setAuthTab = window.__influe_set_auth_tab__ || (() => {});
 
   // -----------------------------
+  // Loader (spinner + progress fake)
+  // -----------------------------
+  // CSS injetado para o overlay de carregamento
+  (function injectLoaderCSS() {
+    const css = `
+    .influe-loader-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9999;backdrop-filter:saturate(120%) blur(2px)}
+    .influe-loader-overlay.show{display:flex;align-items:center;justify-content:center}
+    .influe-loader-card{width:min(420px,90vw);background:linear-gradient(180deg, rgba(20,25,40,.98), rgba(10,12,20,.98));border:1px solid rgba(148,163,184,.25);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.6);padding:1rem 1.1rem;color:#e8f1ff}
+    .influe-row{display:flex;gap:.75rem;align-items:center}
+    .influe-spinner{width:26px;height:26px;border-radius:50%;border:3px solid rgba(255,255,255,.22);border-top-color:#3b82f6;animation:influe-spin 0.9s linear infinite;flex:0 0 26px}
+    @keyframes influe-spin{to{transform:rotate(360deg)}}
+    .influe-title{font-weight:700;margin:0 0 .35rem}
+    .influe-msg{margin:0;color:#cfe2ff}
+    .influe-progress{margin:.85rem 0 .1rem;height:10px;background:rgba(255,255,255,.12);border-radius:999px;overflow:hidden}
+    .influe-bar{height:100%;width:3%;background:#3b82f6;transition:width .25s ease;border-radius:999px}
+    .influe-pct{font-size:.9rem;color:#b8c2d9}
+    `;
+    const s = document.createElement("style");
+    s.id = "influe-loader-css";
+    s.textContent = css;
+    document.head.appendChild(s);
+  })();
+
+  let loader = null;
+  let progressTimer = null;
+  let currentPct = 0;
+
+  function ensureLoader() {
+    if (loader) return loader;
+    const overlay = document.createElement("div");
+    overlay.className = "influe-loader-overlay";
+    overlay.innerHTML = `
+      <div class="influe-loader-card">
+        <div class="influe-row">
+          <div class="influe-spinner"></div>
+          <div>
+            <h3 class="influe-title" id="influe-loader-title">Processando…</h3>
+            <p class="influe-msg" id="influe-loader-msg">Por favor, aguarde.</p>
+          </div>
+        </div>
+        <div class="influe-progress">
+          <div class="influe-bar" id="influe-loader-bar"></div>
+        </div>
+        <div class="influe-pct" id="influe-loader-pct">0%</div>
+      </div>`;
+    document.body.appendChild(overlay);
+    loader = {
+      overlay,
+      title: overlay.querySelector("#influe-loader-title"),
+      msg: overlay.querySelector("#influe-loader-msg"),
+      bar: overlay.querySelector("#influe-loader-bar"),
+      pct: overlay.querySelector("#influe-loader-pct"),
+    };
+    return loader;
+  }
+
+  function showLoader(title = "Processando…", message = "Por favor, aguarde.") {
+    const L = ensureLoader();
+    L.title.textContent = title;
+    L.msg.textContent = message;
+    currentPct = 1;
+    updateProgress(1);
+    L.overlay.classList.add("show");
+
+    // Fake progress: sobe lentamente até 95%
+    clearInterval(progressTimer);
+    progressTimer = setInterval(() => {
+      if (currentPct < 95) {
+        currentPct += Math.max(1, Math.round((100 - currentPct) * 0.03));
+        updateProgress(currentPct);
+      }
+    }, 350);
+  }
+
+  function updateProgress(p) {
+    const L = ensureLoader();
+    const pct = Math.max(0, Math.min(100, Math.floor(p)));
+    L.bar.style.width = pct + "%";
+    L.pct.textContent = pct + "%";
+  }
+
+  function hideLoader() {
+    if (!loader) return;
+    clearInterval(progressTimer);
+    progressTimer = null;
+    updateProgress(100);
+    setTimeout(() => {
+      loader.overlay.classList.remove("show");
+      updateProgress(0);
+    }, 200);
+  }
+
+  function disableActions(disabled) {
+    if (elBtnPhoto) elBtnPhoto.disabled = disabled;
+    if (elBtnSubmitText) elBtnSubmitText.disabled = disabled;
+  }
+
+  // -----------------------------
   // Utilidades
   // -----------------------------
   if (elYear) elYear.textContent = new Date().getFullYear();
 
   function setFeedback(msg) {
+    // Se por acaso o DOM mudou (navegação PJAX etc.), re-seleciona
+    if (!elFeedback) elFeedback = pickMainFeedback();
     if (elFeedback) elFeedback.textContent = msg || "";
   }
 
   function showAnalysis(analysis) {
     const score =
       typeof analysis.score_risk === "number" ? analysis.score_risk : "—";
-    const tags = Array.isArray(analysis.tags)
-      ? analysis.tags.join(", ")
-      : "—";
+    const tags = Array.isArray(analysis.tags) ? analysis.tags.join(", ") : "—";
     const recs = Array.isArray(analysis.recommendations)
       ? analysis.recommendations
       : [];
@@ -139,7 +248,6 @@
       const s = data.session ?? "—";
       const u = data.user ?? "—";
 
-      // Exibir Sessão como x/free (quando fizer sentido)
       const free = typeof data.free_credits === "number" ? data.free_credits : 0;
       const sText = typeof s === "number" && free > 0 ? `${s}/${free}` : String(s);
       const uText = typeof u === "number" ? String(u) : "—";
@@ -150,7 +258,6 @@
     }
   }
 
-  // Retorna objeto para o chamador decidir mensagens/ações.
   async function checkGateForCredits() {
     try {
       const res = await fetch("/gate/login", { headers: authHeaders() });
@@ -172,12 +279,12 @@
   async function requireLoginIfNoCredits() {
     const res = await checkGateForCredits();
     if (res.gated) {
-      setAuthTab('login');
+      setAuthTab("login");
       showAuth();
       return true;
     }
     if (res.need_purchase) {
-      setFeedback("Você está logado, mas sem créditos. Clique em “Comprar créditos”.");
+      setFeedback('Você está logado, mas sem créditos. Clique em “Comprar créditos”.');
     }
     return false;
   }
@@ -258,10 +365,10 @@
   formSignup?.addEventListener("submit", (e) => {
     e.preventDefault();
 
-    const email  = (elRegEmail?.value || "").trim().toLowerCase();
+    const email = (elRegEmail?.value || "").trim().toLowerCase();
     const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
-    const pass   = (elRegPass?.value || "");
-    const pass2  = (elRegPass2?.value || "");
+    const pass = elRegPass?.value || "";
+    const pass2 = elRegPass2?.value || "";
 
     if (!email || !email2 || !pass || !pass2) {
       setFeedback("Preencha todos os campos.");
@@ -299,11 +406,10 @@
   // -----------------------------
   elBtnPurchase?.addEventListener("click", async () => {
     if (!getToken()) {
-      setAuthTab('login');
+      setAuthTab("login");
       showAuth();
       return;
     }
-    // Em vez de chamar /purchase direto, levamos o usuário para a página de compra
     window.location.href = "/buy";
   });
 
@@ -366,18 +472,19 @@
     if (!elInputPhoto.files || !elInputPhoto.files[0]) return;
 
     setFeedback("Compactando imagem...");
+    disableActions(true);
+    showLoader("Analisando foto…", "Estamos processando sua imagem.");
+
     const original = elInputPhoto.files[0];
     const compressed = await compressImage(original, 1920, 1920, 0.7);
 
     const fd = new FormData();
+    // Back-end aceita "photo" — fixamos esse nome
     fd.append("photo", compressed, compressed.name);
 
-    // NOVO: inclui a intenção do usuário (até 140 chars) se houver
     if (elIntent && typeof elIntent.value === "string") {
       const intentValue = (elIntent.value || "").trim().slice(0, 140);
-      if (intentValue) {
-        fd.append("intent", intentValue);
-      }
+      if (intentValue) fd.append("intent", intentValue);
     }
 
     setFeedback("Enviando para análise...");
@@ -389,22 +496,37 @@
       });
 
       if (res.status === 402) {
+        hideLoader();
         await updateCreditsLabel();
         const gated = await requireLoginIfNoCredits();
         if (!gated) setFeedback("Sem créditos disponíveis.");
         return;
       }
+      if (res.status === 429) {
+        hideLoader();
+        setFeedback("Muitas requisições. Tente novamente em instantes.");
+        return;
+      }
 
-      const json = await res.json();
-      if (json.ok) {
+      // Alguns proxies podem retornar HTML em erro — protegemos o parse
+      let json = null;
+      try { json = await res.json(); }
+      catch { /* se não for JSON, cai no genérico */ }
+
+      if (json && json.ok) {
+        updateProgress(100);
         showAnalysis(json.analysis);
         setFeedback("Análise concluída.");
-      } else {
+      } else if (json && json.error) {
         setFeedback(json.error || "Falha na análise da foto.");
+      } else {
+        setFeedback("Falha inesperada na análise da foto.");
       }
     } catch (_) {
       setFeedback("Erro de rede ao enviar foto.");
     } finally {
+      hideLoader();
+      disableActions(false);
       if (elInputPhoto) elInputPhoto.value = "";
       await updateCreditsLabel();
     }
@@ -420,7 +542,10 @@
       return;
     }
 
+    disableActions(true);
+    showLoader("Analisando texto…", "Estamos processando sua análise.");
     setFeedback("Analisando texto...");
+
     try {
       const res = await fetch("/analyze_text", {
         method: "POST",
@@ -429,22 +554,36 @@
       });
 
       if (res.status === 402) {
+        hideLoader();
         await updateCreditsLabel();
         const gated = await requireLoginIfNoCredits();
         if (!gated) setFeedback("Sem créditos disponíveis.");
         return;
       }
+      if (res.status === 429) {
+        hideLoader();
+        setFeedback("Muitas requisições. Tente novamente em instantes.");
+        return;
+      }
 
-      const json = await res.json();
-      if (json.ok) {
+      let json = null;
+      try { json = await res.json(); }
+      catch { /* ignora – trata abaixo */ }
+
+      if (json && json.ok) {
+        updateProgress(100);
         showAnalysis(json.analysis);
         setFeedback("Análise concluída.");
-      } else {
+      } else if (json && json.error) {
         setFeedback(json.error || "Falha na análise do texto.");
+      } else {
+        setFeedback("Falha inesperada na análise do texto.");
       }
     } catch (_) {
       setFeedback("Erro de rede ao enviar texto.");
     } finally {
+      hideLoader();
+      disableActions(false);
       await updateCreditsLabel();
     }
   });
@@ -453,6 +592,8 @@
   // Boot
   // -----------------------------
   document.addEventListener("DOMContentLoaded", () => {
+    // Se o DOM foi re-renderizado após defer, garanta que pegamos o feedback correto
+    elFeedback = pickMainFeedback();
     updateAuthUI();
     updateCreditsLabel();
   });
