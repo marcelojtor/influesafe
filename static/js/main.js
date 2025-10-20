@@ -1,25 +1,19 @@
 /* INFLUE — Controller (mobile-first)
- * Objetivo:
- * - Home sempre acessível.
- * - Modal de autenticação com modos: Entrar / Criar conta (com confirmações).
- * - 3 créditos de SESSÃO sem barreira; exigir login só ao esgotar ou ao comprar.
- * - Botões do modal: Entrar e Criar conta funcionais.
- * - Fluxo de análise (foto/texto), consumo de crédito e compra.
- * - Spinner + barra de progresso durante processamento.
+ * Fluxos: autenticação, compra, envio de foto/texto, feedback e loader.
  */
 
 (function () {
   "use strict";
 
   // -----------------------------
-  // Shortcuts / elementos
+  // Helpers DOM
   // -----------------------------
   const $ = (sel) => document.querySelector(sel);
 
   // Rodapé
   const elYear = $("#year");
 
-  // Header (estado e créditos)
+  // Header
   const elCredits = $("#credits-left");
   const elBtnOpenAuth = $("#btn-open-auth");
   const elBtnLogout = $("#btn-logout");
@@ -27,38 +21,25 @@
   const elUserLabel = $("#user-label");
   const elUserState = $("#user-state");
 
-  // Modal (campos e botões — ENTRAR)
+  // Modal (login)
+  const formLogin = $("#form-login");
   const elAuthEmail = $("#auth-email");
   const elAuthPassword = $("#auth-password");
-  const formLogin = $("#form-login");
 
-  // Modal (campos e botões — CRIAR CONTA)
+  // Modal (signup)
   const formSignup = $("#form-signup");
   const elRegEmail = $("#reg-email");
   const elRegEmail2 = $("#reg-email2");
   const elRegPass = $("#reg-pass");
   const elRegPass2 = $("#reg-pass2");
 
-  // Home / análise
-  // ATENÇÃO: pode haver DOIS #feedback (um no modal). Pegamos o do CARD de upload.
-  function pickMainFeedback() {
-    const list = document.querySelectorAll("#feedback");
-    if (list.length === 0) return null;
-    if (list.length === 1) return list[0];
-    // Prefere o que NÃO está dentro do modal
-    for (const el of list) {
-      if (!el.closest("#auth-modal")) return el;
-    }
-    return list[0];
-  }
-  let elFeedback = pickMainFeedback();
-
+  // Upload card
   const elInputPhoto = $("#photo-input");
   const elBtnPhoto = $("#btn-photo");
   const elTextarea = $("#textcontent");
   const elBtnSubmitText = $("#btn-submit-text");
 
-  // Novo campo de intenção (até 140 chars). Se não existir, ignoramos.
+  // Campo opcional de intenção (se existir)
   const elIntent = $("#intent");
 
   // Saída de análise
@@ -68,16 +49,28 @@
   const elOutTags = $("#analysis-tags");
   const elOutRecs = $("#analysis-recs");
 
-  // Modal controls fornecidos por base.html
+  // Modal controls (expostos por base.html)
   const showAuth = window.__influe_show_auth__ || (() => {});
   const hideAuth = window.__influe_hide_auth__ || (() => {});
   const setAuthTab = window.__influe_set_auth_tab__ || (() => {});
 
+  // Seleciona SEMPRE o feedback do CARD (não o do modal)
+  function pickMainFeedback() {
+    const list = document.querySelectorAll("#feedback");
+    if (list.length === 0) return null;
+    if (list.length === 1) return list[0];
+    for (const el of list) {
+      if (!el.closest("#auth-modal")) return el;
+    }
+    return list[0];
+  }
+  let elFeedback = pickMainFeedback();
+
   // -----------------------------
-  // Loader (spinner + progress fake)
+  // Loader (spinner + progress)
   // -----------------------------
-  // CSS injetado para o overlay de carregamento
   (function injectLoaderCSS() {
+    if (document.getElementById("influe-loader-css")) return;
     const css = `
     .influe-loader-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:9999;backdrop-filter:saturate(120%) blur(2px)}
     .influe-loader-overlay.show{display:flex;align-items:center;justify-content:center}
@@ -130,6 +123,13 @@
     return loader;
   }
 
+  function updateProgress(p) {
+    const L = ensureLoader();
+    const pct = Math.max(0, Math.min(100, Math.floor(p)));
+    L.bar.style.width = pct + "%";
+    L.pct.textContent = pct + "%";
+  }
+
   function showLoader(title = "Processando…", message = "Por favor, aguarde.") {
     const L = ensureLoader();
     L.title.textContent = title;
@@ -137,8 +137,6 @@
     currentPct = 1;
     updateProgress(1);
     L.overlay.classList.add("show");
-
-    // Fake progress: sobe lentamente até 95%
     clearInterval(progressTimer);
     progressTimer = setInterval(() => {
       if (currentPct < 95) {
@@ -146,13 +144,6 @@
         updateProgress(currentPct);
       }
     }, 350);
-  }
-
-  function updateProgress(p) {
-    const L = ensureLoader();
-    const pct = Math.max(0, Math.min(100, Math.floor(p)));
-    L.bar.style.width = pct + "%";
-    L.pct.textContent = pct + "%";
   }
 
   function hideLoader() {
@@ -163,32 +154,39 @@
     setTimeout(() => {
       loader.overlay.classList.remove("show");
       updateProgress(0);
-    }, 200);
+    }, 180);
   }
 
-  function disableActions(disabled) {
-    if (elBtnPhoto) elBtnPhoto.disabled = disabled;
-    if (elBtnSubmitText) elBtnSubmitText.disabled = disabled;
+  // Desabilita ações que o usuário pode clicar repetidamente
+  function setActionsDisabled(disabled) {
+    const toggle = (el) => { if (el) el.disabled = disabled; };
+    toggle(elBtnPhoto);
+    toggle(elBtnSubmitText);
+    // Também desabilita botões submit dos forms (se existirem)
+    formLogin?.querySelectorAll("button, input").forEach((n) => { n.disabled = disabled; });
+    formSignup?.querySelectorAll("button, input").forEach((n) => { n.disabled = disabled; });
   }
 
   // -----------------------------
-  // Utilidades
+  // Utilidades gerais
   // -----------------------------
   if (elYear) elYear.textContent = new Date().getFullYear();
 
   function setFeedback(msg) {
-    // Se por acaso o DOM mudou (navegação PJAX etc.), re-seleciona
     if (!elFeedback) elFeedback = pickMainFeedback();
     if (elFeedback) elFeedback.textContent = msg || "";
   }
 
+  function parseJSONSafe(res) {
+    return res.text().then((t) => {
+      try { return JSON.parse(t); } catch { return { __raw: t }; }
+    });
+  }
+
   function showAnalysis(analysis) {
-    const score =
-      typeof analysis.score_risk === "number" ? analysis.score_risk : "—";
+    const score = typeof analysis.score_risk === "number" ? analysis.score_risk : "—";
     const tags = Array.isArray(analysis.tags) ? analysis.tags.join(", ") : "—";
-    const recs = Array.isArray(analysis.recommendations)
-      ? analysis.recommendations
-      : [];
+    const recs = Array.isArray(analysis.recommendations) ? analysis.recommendations : [];
 
     if (elOutSummary) elOutSummary.textContent = analysis.summary || "Análise concluída.";
     if (elOutScore) elOutScore.textContent = String(score);
@@ -206,17 +204,11 @@
   }
 
   // -----------------------------
-  // Auth helpers (token)
+  // Token
   // -----------------------------
-  function getToken() {
-    return localStorage.getItem("influe_token") || null;
-  }
-  function setToken(token) {
-    if (token) localStorage.setItem("influe_token", token);
-  }
-  function clearToken() {
-    localStorage.removeItem("influe_token");
-  }
+  function getToken() { return localStorage.getItem("influe_token") || null; }
+  function setToken(token) { if (token) localStorage.setItem("influe_token", token); }
+  function clearToken() { localStorage.removeItem("influe_token"); }
   function authHeaders() {
     const t = getToken();
     return t ? { Authorization: "Bearer " + t } : {};
@@ -237,25 +229,22 @@
   }
 
   // -----------------------------
-  // Créditos (status) + Gate
+  // Créditos
   // -----------------------------
   async function updateCreditsLabel() {
     try {
       const res = await fetch("/credits_status", { headers: authHeaders() });
+      if (!res.ok) return; // evita 5xx aparecer ao usuário
       const json = await res.json();
       if (!json?.ok) return;
       const data = json.data || {};
       const s = data.session ?? "—";
       const u = data.user ?? "—";
-
       const free = typeof data.free_credits === "number" ? data.free_credits : 0;
       const sText = typeof s === "number" && free > 0 ? `${s}/${free}` : String(s);
       const uText = typeof u === "number" ? String(u) : "—";
-
       if (elCredits) elCredits.textContent = `Sessão: ${sText} | Usuário: ${uText}`;
-    } catch (_) {
-      // silencioso
-    }
+    } catch {}
   }
 
   async function checkGateForCredits() {
@@ -263,51 +252,46 @@
       const res = await fetch("/gate/login", { headers: authHeaders() });
       const json = await res.json();
       if (!json?.ok) return { gated: false, need_purchase: false, logged_in: false };
-
-      if (json.require_login) {
-        return { gated: true, need_purchase: false, logged_in: !!json.logged_in };
-      }
-      if (json.need_purchase) {
-        return { gated: false, need_purchase: true, logged_in: true };
-      }
+      if (json.require_login) return { gated: true, need_purchase: false, logged_in: !!json.logged_in };
+      if (json.need_purchase) return { gated: false, need_purchase: true, logged_in: true };
       return { gated: false, need_purchase: false, logged_in: !!json.logged_in };
-    } catch (_) {
-      return { gated: false, need_purchase: false, logged_in: false };
-    }
+    } catch { return { gated: false, need_purchase: false, logged_in: false }; }
   }
 
   async function requireLoginIfNoCredits() {
     const res = await checkGateForCredits();
-    if (res.gated) {
-      setAuthTab("login");
-      showAuth();
-      return true;
-    }
-    if (res.need_purchase) {
-      setFeedback('Você está logado, mas sem créditos. Clique em “Comprar créditos”.');
-    }
+    if (res.gated) { setAuthTab("login"); showAuth(); return true; }
+    if (res.need_purchase) setFeedback('Você está logado, mas sem créditos. Clique em “Comprar créditos”.');
     return false;
   }
 
   // -----------------------------
-  // Validações simples
+  // Auth
   // -----------------------------
-  function isValidEmail(v) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-  }
+  function isValidEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
 
-  // -----------------------------
-  // Login / Registro (modal)
-  // -----------------------------
-  async function doLogin(email, password) {
+  formLogin?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = (elAuthEmail?.value || "").trim().toLowerCase();
+    const password = elAuthPassword?.value || "";
+    if (!email || !password) { setFeedback("Informe e-mail e senha."); return; }
+    if (!isValidEmail(email)) { setFeedback("E-mail inválido."); return; }
+
+    setActionsDisabled(true);
+    showLoader("Entrando…", "Validando suas credenciais.");
     setFeedback("Entrando...");
+
     try {
       const res = await fetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      const json = await res.json();
+
+      if (res.status === 401) { setFeedback("Credenciais inválidas."); return; }
+      if (res.status >= 500) { setFeedback("Servidor indisponível (erro 5xx). Tente novamente em instantes."); return; }
+
+      const json = await parseJSONSafe(res);
       if (json.ok && json.token) {
         setToken(json.token);
         hideAuth();
@@ -317,104 +301,76 @@
       } else {
         setFeedback(json.error || "Falha na autenticação.");
       }
-    } catch (_) {
+    } catch {
       setFeedback("Erro de rede.");
+    } finally {
+      hideLoader();
+      setActionsDisabled(false);
     }
-  }
+  });
 
-  async function doRegister(email, password) {
+  formSignup?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email  = (elRegEmail?.value || "").trim().toLowerCase();
+    const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
+    const pass   = elRegPass?.value || "";
+    const pass2  = elRegPass2?.value || "";
+    if (!email || !email2 || !pass || !pass2) { setFeedback("Preencha todos os campos."); return; }
+    if (!isValidEmail(email)) { setFeedback("E-mail inválido."); return; }
+    if (email !== email2) { setFeedback("Os e-mails não conferem."); return; }
+    if (pass.length < 6) { setFeedback("Senha muito curta (mín. 6)."); return; }
+    if (pass !== pass2) { setFeedback("As senhas não conferem."); return; }
+
+    setActionsDisabled(true);
+    showLoader("Criando conta…", "Preparando seu acesso.");
     setFeedback("Criando conta...");
+
     try {
       const res = await fetch("/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password: pass }),
       });
-      const json = await res.json();
+
+      if (res.status === 409) { setFeedback("E-mail já cadastrado."); return; }
+      if (res.status >= 500) { setFeedback("Servidor indisponível (erro 5xx). Tente novamente."); return; }
+
+      const json = await parseJSONSafe(res);
       if (json.ok && json.token) {
         setToken(json.token);
-        setFeedback("Conta criada com sucesso.");
         hideAuth();
+        setFeedback("Conta criada com sucesso.");
         updateAuthUI();
         await updateCreditsLabel();
       } else {
         setFeedback(json.error || "Falha ao criar conta.");
       }
-    } catch (_) {
+    } catch {
       setFeedback("Erro de rede.");
+    } finally {
+      hideLoader();
+      setActionsDisabled(false);
     }
-  }
-
-  // ENTRAR: submit
-  formLogin?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const email = (elAuthEmail?.value || "").trim().toLowerCase();
-    const password = elAuthPassword?.value || "";
-    if (!email || !password) {
-      setFeedback("Informe e-mail e senha.");
-      return;
-    }
-    if (!isValidEmail(email)) {
-      setFeedback("E-mail inválido.");
-      return;
-    }
-    doLogin(email, password);
   });
 
-  // CRIAR CONTA: submit (com confirmações)
-  formSignup?.addEventListener("submit", (e) => {
-    e.preventDefault();
-
-    const email = (elRegEmail?.value || "").trim().toLowerCase();
-    const email2 = (elRegEmail2?.value || "").trim().toLowerCase();
-    const pass = elRegPass?.value || "";
-    const pass2 = elRegPass2?.value || "";
-
-    if (!email || !email2 || !pass || !pass2) {
-      setFeedback("Preencha todos os campos.");
-      return;
-    }
-    if (!isValidEmail(email)) {
-      setFeedback("E-mail inválido.");
-      return;
-    }
-    if (email !== email2) {
-      setFeedback("Os e-mails não conferem.");
-      return;
-    }
-    if (pass.length < 6) {
-      setFeedback("Senha muito curta (mín. 6).");
-      return;
-    }
-    if (pass !== pass2) {
-      setFeedback("As senhas não conferem.");
-      return;
-    }
-    doRegister(email, pass);
-  });
-
-  // Logout
   elBtnLogout?.addEventListener("click", (e) => {
     e.preventDefault();
     clearToken();
     updateAuthUI();
     updateCreditsLabel();
+    setFeedback("Sessão encerrada.");
   });
 
   // -----------------------------
-  // Compra — redireciona para /buy
+  // Compra
   // -----------------------------
-  elBtnPurchase?.addEventListener("click", async () => {
-    if (!getToken()) {
-      setAuthTab("login");
-      showAuth();
-      return;
-    }
+  elBtnPurchase?.addEventListener("click", () => {
+    if (!getToken()) { setAuthTab("login"); showAuth(); return; }
     window.location.href = "/buy";
   });
 
   // -----------------------------
-  // Compressão de imagem (canvas)
+  // Canvas/toBlob polyfill
   // -----------------------------
   if (!HTMLCanvasElement.prototype.toBlob) {
     HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
@@ -458,30 +414,26 @@
       if (!blob) return file;
       const name = file.name?.replace(/\.(png|jpeg|jpg|heic)$/i, "") || "image";
       return new File([blob], `${name}.jpg`, { type: "image/jpeg" });
-    } catch {
-      return file;
-    }
+    } catch { return file; }
   }
 
   // -----------------------------
-  // Envio: /analyze_photo
+  // /analyze_photo
   // -----------------------------
   elBtnPhoto?.addEventListener("click", () => elInputPhoto?.click());
 
   elInputPhoto?.addEventListener("change", async () => {
     if (!elInputPhoto.files || !elInputPhoto.files[0]) return;
 
-    setFeedback("Compactando imagem...");
-    disableActions(true);
+    setActionsDisabled(true);
     showLoader("Analisando foto…", "Estamos processando sua imagem.");
+    setFeedback("Compactando imagem...");
 
     const original = elInputPhoto.files[0];
     const compressed = await compressImage(original, 1920, 1920, 0.7);
 
     const fd = new FormData();
-    // Back-end aceita "photo" — fixamos esse nome
     fd.append("photo", compressed, compressed.name);
-
     if (elIntent && typeof elIntent.value === "string") {
       const intentValue = (elIntent.value || "").trim().slice(0, 140);
       if (intentValue) fd.append("intent", intentValue);
@@ -495,54 +447,36 @@
         body: fd,
       });
 
-      if (res.status === 402) {
-        hideLoader();
-        await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits();
-        if (!gated) setFeedback("Sem créditos disponíveis.");
-        return;
-      }
-      if (res.status === 429) {
-        hideLoader();
-        setFeedback("Muitas requisições. Tente novamente em instantes.");
-        return;
-      }
+      if (res.status === 402) { hideLoader(); await updateCreditsLabel(); const gated = await requireLoginIfNoCredits(); if (!gated) setFeedback("Sem créditos disponíveis."); return; }
+      if (res.status === 429) { hideLoader(); setFeedback("Muitas requisições. Tente novamente em instantes."); return; }
+      if (res.status >= 500) { hideLoader(); setFeedback("Servidor indisponível (erro 5xx)."); return; }
 
-      // Alguns proxies podem retornar HTML em erro — protegemos o parse
-      let json = null;
-      try { json = await res.json(); }
-      catch { /* se não for JSON, cai no genérico */ }
-
-      if (json && json.ok) {
+      const json = await parseJSONSafe(res);
+      if (json.ok) {
         updateProgress(100);
         showAnalysis(json.analysis);
         setFeedback("Análise concluída.");
-      } else if (json && json.error) {
-        setFeedback(json.error || "Falha na análise da foto.");
       } else {
-        setFeedback("Falha inesperada na análise da foto.");
+        setFeedback(json.error || "Falha na análise da foto.");
       }
-    } catch (_) {
+    } catch {
       setFeedback("Erro de rede ao enviar foto.");
     } finally {
       hideLoader();
-      disableActions(false);
+      setActionsDisabled(false);
       if (elInputPhoto) elInputPhoto.value = "";
       await updateCreditsLabel();
     }
   });
 
   // -----------------------------
-  // Envio: /analyze_text
+  // /analyze_text
   // -----------------------------
   elBtnSubmitText?.addEventListener("click", async () => {
     const text = (elTextarea?.value || "").trim();
-    if (!text) {
-      setFeedback("Digite um texto para analisar.");
-      return;
-    }
+    if (!text) { setFeedback("Digite um texto para analisar."); return; }
 
-    disableActions(true);
+    setActionsDisabled(true);
     showLoader("Analisando texto…", "Estamos processando sua análise.");
     setFeedback("Analisando texto...");
 
@@ -553,37 +487,23 @@
         body: JSON.stringify({ text }),
       });
 
-      if (res.status === 402) {
-        hideLoader();
-        await updateCreditsLabel();
-        const gated = await requireLoginIfNoCredits();
-        if (!gated) setFeedback("Sem créditos disponíveis.");
-        return;
-      }
-      if (res.status === 429) {
-        hideLoader();
-        setFeedback("Muitas requisições. Tente novamente em instantes.");
-        return;
-      }
+      if (res.status === 402) { hideLoader(); await updateCreditsLabel(); const gated = await requireLoginIfNoCredits(); if (!gated) setFeedback("Sem créditos disponíveis."); return; }
+      if (res.status === 429) { hideLoader(); setFeedback("Muitas requisições. Tente novamente em instantes."); return; }
+      if (res.status >= 500) { hideLoader(); setFeedback("Servidor indisponível (erro 5xx)."); return; }
 
-      let json = null;
-      try { json = await res.json(); }
-      catch { /* ignora – trata abaixo */ }
-
-      if (json && json.ok) {
+      const json = await parseJSONSafe(res);
+      if (json.ok) {
         updateProgress(100);
         showAnalysis(json.analysis);
         setFeedback("Análise concluída.");
-      } else if (json && json.error) {
-        setFeedback(json.error || "Falha na análise do texto.");
       } else {
-        setFeedback("Falha inesperada na análise do texto.");
+        setFeedback(json.error || "Falha na análise do texto.");
       }
-    } catch (_) {
+    } catch {
       setFeedback("Erro de rede ao enviar texto.");
     } finally {
       hideLoader();
-      disableActions(false);
+      setActionsDisabled(false);
       await updateCreditsLabel();
     }
   });
@@ -592,7 +512,6 @@
   // Boot
   // -----------------------------
   document.addEventListener("DOMContentLoaded", () => {
-    // Se o DOM foi re-renderizado após defer, garanta que pegamos o feedback correto
     elFeedback = pickMainFeedback();
     updateAuthUI();
     updateCreditsLabel();
