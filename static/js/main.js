@@ -56,15 +56,11 @@
 
   // Seleciona SEMPRE o feedback do CARD (não o do modal)
   function pickMainFeedback() {
-    // ⚠️ Compat com redesign: aceitar #page-feedback (novo) e #feedback (legado)
     const candidates = [
       document.querySelector("#page-feedback"),
-      document.querySelector("#feedback")
+      document.querySelector("#feedback"),
     ].filter(Boolean);
-
     if (candidates.length) return candidates[0];
-
-    // fallback defensivo: evitar capturar feedback do modal
     const all = Array.from(document.querySelectorAll("#feedback, #page-feedback"));
     for (const el of all) {
       if (!el.closest("#auth-modal")) return el;
@@ -169,7 +165,6 @@
     const toggle = (el) => { if (el) el.disabled = disabled; };
     toggle(elBtnPhoto);
     toggle(elBtnSubmitText);
-    // Também desabilita botões submit dos forms (se existirem)
     formLogin?.querySelectorAll("button, input").forEach((n) => { n.disabled = disabled; });
     formSignup?.querySelectorAll("button, input").forEach((n) => { n.disabled = disabled; });
   }
@@ -241,7 +236,7 @@
   async function updateCreditsLabel() {
     try {
       const res = await fetch("/credits_status", { headers: authHeaders() });
-      if (!res.ok) return; // evita 5xx aparecer ao usuário
+      if (!res.ok) return;
       const json = await res.json();
       if (!json?.ok) return;
       const data = json.data || {};
@@ -386,7 +381,7 @@
       const len = binStr.length;
       const arr = new Uint8Array(len);
       for (let i = 0; i < len; i++) arr[i] = binStr.charCodeAt(i);
-      callback(new Blob([arr], { type: type || "image/jpeg" }));
+      callback(new Blob([arr], { type: "image/jpeg" }));
     };
   }
 
@@ -427,7 +422,7 @@
   // -----------------------------
   // /analyze_photo
   // -----------------------------
-  const elBtnTextOpen = document.getElementById("btn-text"); // apenas abre a área de texto (se existir)
+  const elBtnTextOpen = document.getElementById("btn-text");
   elBtnTextOpen?.addEventListener("click", () => {
     document.getElementById("textcontent")?.focus();
   });
@@ -461,7 +456,12 @@
 
       if (res.status === 402) { hideLoader(); await updateCreditsLabel(); const gated = await requireLoginIfNoCredits(); if (!gated) setFeedback("Sem créditos disponíveis."); return; }
       if (res.status === 429) { hideLoader(); setFeedback("Muitas requisições. Tente novamente em instantes."); return; }
-      if (res.status >= 500) { hideLoader(); setFeedback("Servidor indisponível (erro 5xx)."); return; }
+      if (res.status >= 500) {
+        const json = await parseJSONSafe(res);
+        hideLoader();
+        setFeedback(json.error || "Servidor indisponível (erro 5xx).");
+        return;
+      }
 
       const json = await parseJSONSafe(res);
       if (json.ok) {
@@ -501,7 +501,12 @@
 
       if (res.status === 402) { hideLoader(); await updateCreditsLabel(); const gated = await requireLoginIfNoCredits(); if (!gated) setFeedback("Sem créditos disponíveis."); return; }
       if (res.status === 429) { hideLoader(); setFeedback("Muitas requisições. Tente novamente em instantes."); return; }
-      if (res.status >= 500) { hideLoader(); setFeedback("Servidor indisponível (erro 5xx)."); return; }
+      if (res.status >= 500) {
+        const json = await parseJSONSafe(res);
+        hideLoader();
+        setFeedback(json.error || "Servidor indisponível (erro 5xx).");
+        return;
+      }
 
       const json = await parseJSONSafe(res);
       if (json.ok) {
