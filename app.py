@@ -81,9 +81,14 @@ rate_limiter = SimpleRateLimiter(
     min_interval_s=RATE_LIMIT_MIN_INTERVAL_MS / 1000.0,
 )
 
-# ===== Helpers de resposta JSON de erro (NOVO) =====
-def _json_error(status: int, msg: str):
-    return jsonify({"ok": False, "error": msg}), status
+# ===== Helpers de resposta JSON de erro (AJUSTE: suporta 'stage') =====
+def _json_error(status: int, msg: str, stage: Optional[str] = None, extra: Optional[dict] = None):
+    payload = {"ok": False, "error": msg}
+    if stage:
+        payload["stage"] = stage
+    if extra:
+        payload.update(extra)
+    return jsonify(payload), status
 
 def _wants_json() -> bool:
     """
@@ -468,104 +473,125 @@ def _ensure_session() -> Tuple[str, bool]:
 @require_auth_maybe
 def analyze_photo(user_id: Optional[int]):
     session_id, created_now = _ensure_session()
-
+    stage = "start"
     try:
         # arquivo (aceita "file" ou "photo")
+        stage = "parse_upload"
         file = request.files.get("file") or request.files.get("photo")
         if not file or not file.filename:
-            return _json_error(400, "Nenhuma imagem enviada.")
+            print("[PHOTO][parse_upload] Nenhuma imagem enviada.")
+            return _json_error(400, "Nenhuma imagem enviada.", stage=stage)
 
+        stage = "validate_upload"
         filename = secure_filename(file.filename.lower())
         if not any(filename.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
-            return _json_error(400, "Formato inválido. Use JPG/PNG.")
+            print(f"[PHOTO][validate_upload] Formato inválido: {filename}")
+            return _json_error(400, "Formato inválido. Use JPG/PNG.", stage=stage)
 
         file.seek(0, os.SEEK_END)
         size_mb = file.tell() / (1024 * 1024)
         file.seek(0)
         if size_mb > MAX_UPLOAD_MB:
-            return _json_error(400, f"Arquivo excede {MAX_UPLOAD_MB}MB.")
+            print(f"[PHOTO][validate_upload] Arquivo excede limite: {size_mb:.2f}MB")
+            return _json_error(400, f"Arquivo excede {MAX_UPLOAD_MB}MB.", stage=stage)
 
-        # Intenção opcional do usuário (até 140 chars) — enviada no FormData
-        intent = (request.form.get("intent") or "").strip()[:140] or None
-
+        stage = "save_upload"
         session_dir = os.path.join(STORAGE_DIR, session_id)
         os.makedirs(session_dir, exist_ok=True)
         save_path = os.path.join(session_dir, filename)
         file.save(save_path)
+        print(f"[PHOTO][save_upload] Salvo em {save_path}")
 
         # consumo de crédito (usuário > sessão)
+        stage = "consume_credit"
         ok = False
         if user_id:
             ok = consume_user_credit_atomic(user_id)
         if not ok:
             ok = consume_session_credit_atomic(session_id)
         if not ok:
-            return _json_error(402, "Sem créditos disponíveis. Faça login e/ou compre créditos.")
+            print("[PHOTO][consume_credit] Sem créditos.")
+            return _json_error(402, "Sem créditos disponíveis. Faça login e/ou compre créditos.", stage=stage)
 
         # Chamada à IA com fallback de compatibilidade de assinatura
+        stage = "openai_call"
         try:
-            result = ai_client.analyze_image(save_path, instruction=intent)
+            result = ai_client.analyze_image(save_path, instruction=(request.form.get("intent") or "").strip()[:140] or None)
         except TypeError:
             try:
-                result = ai_client.analyze_image(save_path, intent=intent)
+                result = ai_client.analyze_image(save_path, intent=(request.form.get("intent") or "").strip()[:140] or None)
             except TypeError:
                 result = ai_client.analyze_image(save_path)
 
         if not isinstance(result, dict) or not result.get("ok"):
             err = (result or {}).get("error", "Falha na análise de IA.")
-            return _json_error(502, err)
+            print(f"[PHOTO][openai_call][ERR] {err}")
+            return _json_error(502, err, stage=stage)
 
         # meta inclui a intenção (se houver) para auditoria
-        meta = json.dumps({"filename": filename, **({"intent": intent} if intent else {})})
+        stage = "db_record"
+        meta = json.dumps({"filename": filename, **({"intent": (request.form.get("intent") or "").strip()[:140]} if (request.form.get("intent") or "").strip() else {})})
         tags = json.dumps(result.get("tags", []))
         score = int(result.get("score_risk", 0))
         record_analysis(user_id=user_id, session_id=session_id, a_type="photo", meta=meta, score_risk=score, tags=tags)
+        print("[PHOTO][db_record] Registro persistido.")
 
+        stage = "respond"
         resp = make_response(jsonify({"ok": True, "analysis": result}))
         if created_now:
             _ensure_session_cookie(resp, session_id)
         return resp
 
     except Exception as e:
-        print(f"[ERR][/analyze_photo] {repr(e)}")
-        return _json_error(500, "Não foi possível concluir a análise da foto.")
+        print(f"[ERR][/analyze_photo][{stage}] {repr(e)}")
+        return _json_error(500, "Não foi possível concluir a análise da foto.", stage=stage)
 
 @app.post("/analyze_text")
 @rate_limit
 @require_auth_maybe
 def analyze_text(user_id: Optional[int]):
     session_id, created_now = _ensure_session()
+    stage = "start"
     try:
+        stage = "parse_input"
         data = request.get_json(silent=True) or {}
         text = (data.get("text") or "").strip()
         if not text:
-            return _json_error(400, "Texto vazio.")
+            print("[TEXT][parse_input] Texto vazio.")
+            return _json_error(400, "Texto vazio.", stage=stage)
 
+        stage = "consume_credit"
         ok = False
         if user_id:
             ok = consume_user_credit_atomic(user_id)
         if not ok:
             ok = consume_session_credit_atomic(session_id)
         if not ok:
-            return _json_error(402, "Sem créditos disponíveis. Faça login e/ou compre créditos.")
+            print("[TEXT][consume_credit] Sem créditos.")
+            return _json_error(402, "Sem créditos disponíveis. Faça login e/ou compre créditos.", stage=stage)
 
+        stage = "openai_call"
         result = ai_client.analyze_text(text)
         if not isinstance(result, dict) or not result.get("ok"):
-            return _json_error(502, "Falha na análise de IA.")
+            print(f"[TEXT][openai_call][ERR] {result}")
+            return _json_error(502, "Falha na análise de IA.", stage=stage)
 
+        stage = "db_record"
         meta = json.dumps({"chars": len(text)})
         tags = json.dumps(result.get("tags", []))
         score = int(result.get("score_risk", 0))
         record_analysis(user_id=user_id, session_id=session_id, a_type="text", meta=meta, score_risk=score, tags=tags)
+        print("[TEXT][db_record] Registro persistido.")
 
+        stage = "respond"
         resp = make_response(jsonify({"ok": True, "analysis": result}))
         if created_now:
             _ensure_session_cookie(resp, session_id)
         return resp
 
     except Exception as e:
-        print(f"[ERR][/analyze_text] {repr(e)}")
-        return _json_error(500, "Não foi possível concluir a análise do texto.")
+        print(f"[ERR][/analyze_text][{stage}] {repr(e)}")
+        return _json_error(500, "Não foi possível concluir a análise do texto.", stage=stage)
 
 # ==========================================================
 # Pagamentos (mock + webhook PagBank)
