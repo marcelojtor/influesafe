@@ -93,6 +93,7 @@ a:hover{text-decoration:underline}
   color:#e8f1ff;
   border-radius:12px;
 }
+.btn-outline:hover{filter:brightness(1.05) saturate(1.05)}
 
 /* ---------- Main / Hero ----------
    Mobile-first: upload-card vem primeiro
@@ -101,12 +102,15 @@ a:hover{text-decoration:underline}
 .upload-card{
   background:linear-gradient(180deg, rgba(17,24,39,.55), rgba(15,23,42,.35));
   border:1px solid var(--border);
-  border-radius:16px;padding:1rem;
+  border-radius:16px;
+  padding:1rem;
   box-shadow:0 10px 30px rgba(0,0,0,.4);
 }
 .card-title{margin:.25rem 0 .75rem;font-size:1.25rem}
 .actions{display:flex;gap:.6rem;flex-wrap:wrap}
-.upload{display:flex}
+.upload{display:flex;flex-direction:column;gap:.5rem} /* ↑ melhora respiração vertical no mobile */
+
+/* ---- Campo de texto/legenda ---- */
 .text-area{margin-top:.85rem}
 .label{display:block;margin:.2rem 0 .4rem;color:var(--muted)}
 .text-area textarea{
@@ -115,13 +119,19 @@ a:hover{text-decoration:underline}
   color:#fff;padding:.8rem;font-family:inherit;outline:none;
 }
 .text-area textarea::placeholder{color:#a8b3cf}
+.text-area textarea:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(59,130,246,.25);
+}
 .right{display:flex;justify-content:flex-end;margin-top:.55rem}
 
+/* ---- Feedback / Análise ---- */
 .feedback{margin-top:.6rem;color:#e6f3ff;min-height:1.25rem}
 .analysis{margin-top:1rem;border-top:1px solid var(--border-soft);padding-top:1rem}
 .chips{display:flex;gap:.6rem;flex-wrap:wrap}
 .chip{background:var(--panel);border:1px solid var(--border-soft);border-radius:12px;padding:.55rem .75rem}
 
+/* ---- Conteúdo auxiliar ---- */
 .hero-copy{padding:0 0 1rem}
 .title{margin:.1rem 0 .4rem;font-size:1.65rem}
 .subtitle{margin:0 0 .6rem;color:#d7e2ff}
@@ -144,13 +154,35 @@ a:hover{text-decoration:underline}
 .tab{flex:1;text-align:center;border-radius:8px;padding:.45rem .6rem;cursor:pointer}
 .tab.active{background:rgba(255,255,255,.06);border:1px solid var(--border-soft)}
 .form{display:flex;flex-direction:column;gap:.6rem;margin-top:.8rem}
-.field input{width:100%;border-radius:12px;border:1px solid var(--border-soft);background:rgba(255,255,255,.05);color:#fff;padding:.8rem .9rem}
+.field input{
+  width:100%;
+  border-radius:12px;
+  border:1px solid var(--border-soft);
+  background:rgba(255,255,255,.05);
+  color:#fff;
+  padding:.8rem .9rem;
+  outline:none;
+}
+.field input::placeholder{color:#a8b3cf}
+.field input:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(59,130,246,.25);
+}
 .form-actions{display:flex;justify-content:flex-end}
 .divider{height:1px;background:var(--border-soft);margin:1rem 0}
 
 /* ---------- Footer ---------- */
 .footer{border-top:1px solid var(--border-soft);margin-top:1rem}
 .footer-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.9rem 0;flex-wrap:wrap}
+
+/* ---------- Acessibilidade extra ---------- */
+.skip-link{
+  position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;
+}
+.skip-link:focus{
+  position:static;width:auto;height:auto;padding:.5rem .75rem;margin:.25rem;
+  background:#111827;border:1px solid var(--border-soft);border-radius:8px;
+}
 
 /* ---------- Responsividade extra ---------- */
 @media (max-width: 480px){
@@ -159,4 +191,14 @@ a:hover{text-decoration:underline}
   .btn-primary, #btn-buy-link{font-size:.95rem}
   .title{font-size:1.35rem}
   .card-title{font-size:1.15rem}
+  .upload-card{padding:1.05rem}
+}
+
+@media (min-width: 900px){
+  /* Pequeno refinamento no desktop sem mexer no layout geral */
+  .main{
+    grid-template-columns: 1.2fr .8fr; /* upload-card ganha leve destaque */
+    align-items:start;
+  }
+  .hero-copy{position:relative; top:.1rem}
 }
