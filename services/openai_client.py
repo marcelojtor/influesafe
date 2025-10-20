@@ -127,6 +127,7 @@ class OpenAIClient:
         self.client = None
         if _HAS_OPENAI and self.api_key and not self.mock:
             try:
+                # Se o SDK suportar timeout no cliente, já configura aqui.
                 self.client = OpenAI(api_key=self.api_key)
             except Exception:
                 # mantém None; chamadas retornarão erro amigável
@@ -173,6 +174,22 @@ class OpenAIClient:
         })
 
     # -----------------------------------------------------
+    # Função auxiliar: create com fallback de timeout
+    # -----------------------------------------------------
+    def _create_with_timeout_fallback(self, **kwargs):
+        """
+        Chama chat.completions.create com `timeout`; se o SDK não aceitar,
+        refaz a chamada sem `timeout` (compatibilidade entre versões).
+        """
+        if not self.client:
+            raise RuntimeError("OpenAI client indisponível.")
+        try:
+            return self.client.chat.completions.create(timeout=self.request_timeout_s, **kwargs)
+        except TypeError:
+            # SDK não aceita timeout por parâmetro → tenta novamente sem timeout
+            return self.client.chat.completions.create(**kwargs)
+
+    # -----------------------------------------------------
     # Análise de IMAGEM
     # -----------------------------------------------------
     def analyze_image(self, filepath: str, **kwargs) -> Dict[str, Any]:
@@ -212,7 +229,7 @@ class OpenAIClient:
         last_err: Optional[Exception] = None
         for attempt in range(self.retries + 1):
             try:
-                resp = self.client.chat.completions.create(
+                resp = self._create_with_timeout_fallback(
                     model=self.vision_model,
                     messages=[
                         {"role": "system", "content": _SYSTEM_PROMPT_IMAGE},
@@ -220,7 +237,6 @@ class OpenAIClient:
                     ],
                     temperature=0.2,
                     max_tokens=600,
-                    timeout=self.request_timeout_s,
                 )
                 text = (resp.choices[0].message.content or "").strip()
                 data = _safe_parse_model_json(text)
@@ -255,7 +271,7 @@ class OpenAIClient:
         last_err: Optional[Exception] = None
         for attempt in range(self.retries + 1):
             try:
-                resp = self.client.chat.completions.create(
+                resp = self._create_with_timeout_fallback(
                     model=self.text_model,
                     messages=[
                         {"role": "system", "content": _SYSTEM_PROMPT_TEXT},
@@ -263,7 +279,6 @@ class OpenAIClient:
                     ],
                     temperature=0.2,
                     max_tokens=600,
-                    timeout=self.request_timeout_s,
                 )
                 out = (resp.choices[0].message.content or "").strip()
                 data = _safe_parse_model_json(out)
