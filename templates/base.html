@@ -21,7 +21,6 @@
   <header class="topbar">
     <div class="container flex between center-v topbar-row">
       <a class="brand flex center-v" href="/" aria-label="Ir para início">
-        <!-- LOGO 34x34 -->
         <img class="logo-img" src="/static/logo/influe_logo.png" alt="INFLUE" width="34" height="34" loading="eager" decoding="async" />
         <span class="brandtext">INFLUE</span>
       </a>
@@ -39,11 +38,9 @@
           </strong>
         </span>
 
-        <!-- Botão legado oculto (compat main.js) -->
         <button id="btn-purchase" class="btn btn-primary" type="button" title="Comprar créditos" style="display:none;">
           Comprar 10 créditos
         </button>
-        <!-- Link visível -->
         <a id="btn-buy-link" class="btn btn-primary" href="/buy" title="Ir para a página de compra">
           Comprar 10 créditos
         </a>
@@ -54,9 +51,7 @@
     </div>
   </header>
 
-  <!-- Slot opcional para hero/banner (não quebra páginas atuais) -->
   {% block hero %}{% endblock %}
-
   <main id="conteudo-principal" class="main">
     {% block content %}{% endblock %}
   </main>
@@ -128,7 +123,8 @@
         </p>
       </form>
 
-      <div id="feedback" class="muted" role="status" aria-live="polite" style="min-height:1.25rem;"></div>
+      <!-- ALTERADO: ID único para feedback do modal -->
+      <div id="auth-feedback" class="muted" role="status" aria-live="polite" style="min-height:1.25rem;"></div>
       <div class="divider"></div>
       <small class="muted">Ao continuar, você concorda com nossos termos e a política de privacidade.</small>
     </div>
@@ -168,12 +164,10 @@
       linkOpenSignup?.addEventListener('click', ()=>setTab('signup'));
       linkOpenLogin?.addEventListener('click',  ()=>setTab('login'));
 
-      // expõe helpers
       window.__influe_show_auth__ = showModal;
       window.__influe_hide_auth__ = hideModal;
       window.__influe_set_auth_tab__ = setTab;
 
-      // ano do rodapé
       const y = document.getElementById('year');
       if (y) y.textContent = new Date().getFullYear();
     })();
