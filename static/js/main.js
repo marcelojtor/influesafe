@@ -36,11 +36,16 @@
   // Upload card
   const elInputPhoto = $("#photo-input");
   const elBtnPhoto = $("#btn-photo");
-  const elTextarea = $("#textcontent");
-  const elBtnSubmitText = $("#btn-submit-text");
+  const elTextarea = $("#textcontent");           // pode não existir (removido)
+  const elBtnSubmitText = $("#btn-submit-text");  // pode não existir (removido)
 
   // Campo opcional de intenção (se existir)
   const elIntent = $("#intent");
+
+  // Pré-visualização + limpar
+  const elPreviewWrap = $("#photo-preview-wrap");
+  const elPreviewImg  = $("#photo-preview");
+  const elBtnClear    = $("#btn-clear-photo");
 
   // Saída de análise
   const elOut = $("#analysis-output");
@@ -56,16 +61,12 @@
 
   // Seleciona SEMPRE o feedback do CARD (não o do modal)
   function pickMainFeedback() {
-    const candidates = [
-      document.querySelector("#page-feedback"),
-      document.querySelector("#feedback"),
-    ].filter(Boolean);
-    if (candidates.length) return candidates[0];
-    const all = Array.from(document.querySelectorAll("#feedback, #page-feedback"));
-    for (const el of all) {
+    const list = document.querySelectorAll("#page-feedback, #feedback");
+    if (list.length === 0) return null;
+    for (const el of list) {
       if (!el.closest("#auth-modal")) return el;
     }
-    return null;
+    return list[0];
   }
   let elFeedback = pickMainFeedback();
 
@@ -236,7 +237,7 @@
   async function updateCreditsLabel() {
     try {
       const res = await fetch("/credits_status", { headers: authHeaders() });
-      if (!res.ok) return;
+      if (!res.ok) return; // evita 5xx aparecer ao usuário
       const json = await res.json();
       if (!json?.ok) return;
       const data = json.data || {};
@@ -427,6 +428,28 @@
     document.getElementById("textcontent")?.focus();
   });
 
+  // Preview helpers
+  let lastObjectUrl = null;
+  function showPreview(file) {
+    if (!elPreviewWrap || !elPreviewImg) return;
+    try {
+      if (lastObjectUrl) URL.revokeObjectURL(lastObjectUrl);
+      lastObjectUrl = URL.createObjectURL(file);
+      elPreviewImg.src = lastObjectUrl;
+      elPreviewWrap.style.display = "";
+    } catch {}
+  }
+  function clearPreview() {
+    if (elInputPhoto) elInputPhoto.value = "";
+    if (elPreviewImg) elPreviewImg.src = "";
+    if (elPreviewWrap) elPreviewWrap.style.display = "none";
+    if (lastObjectUrl) { try { URL.revokeObjectURL(lastObjectUrl); } catch {} lastObjectUrl = null; }
+    if (elOut) elOut.style.display = "none";
+    setFeedback("");
+  }
+
+  elBtnClear?.addEventListener("click", clearPreview);
+
   elBtnPhoto?.addEventListener("click", () => elInputPhoto?.click());
 
   elInputPhoto?.addEventListener("change", async () => {
@@ -438,6 +461,9 @@
 
     const original = elInputPhoto.files[0];
     const compressed = await compressImage(original, 1920, 1920, 0.7);
+
+    // Mostra preview imediatamente (da versão comprimida)
+    showPreview(compressed);
 
     const fd = new FormData();
     fd.append("photo", compressed, compressed.name);
@@ -476,13 +502,12 @@
     } finally {
       hideLoader();
       setActionsDisabled(false);
-      if (elInputPhoto) elInputPhoto.value = "";
       await updateCreditsLabel();
     }
   });
 
   // -----------------------------
-  // /analyze_text
+  // /analyze_text (pode não existir na UI; guardado por checagens)
   // -----------------------------
   elBtnSubmitText?.addEventListener("click", async () => {
     const text = (elTextarea?.value || "").trim();
