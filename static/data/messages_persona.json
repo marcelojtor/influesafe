@@ -1,0 +1,50 @@
+{
+  "motivacional": [
+    "Sua foto tem bom enquadramento — ótimo trabalho!",
+    "Sorriso autêntico gera mais engajamento.",
+    "Boa composição — sua imagem transmite confiança.",
+    "Pessoas em cena humanizam a mensagem.",
+    "Fotos ao ar livre geram mais interações.",
+    "Mostre resultados reais quando possível.",
+    "Histórias curtas com imagem geram engajamento.",
+    "Seu conteúdo está evoluindo — continue!",
+    "Ótima coerência visual no feed.",
+    "Excelente ritmo de publicações — parabéns!"
+  ],
+  "recomendacao_tecnica": [
+    "Iluminação natural aumenta credibilidade.",
+    "Use close para destacar detalhes do serviço.",
+    "A legenda pode ser mais direta e clara.",
+    "Evite hashtags genéricas; seja específico.",
+    "Fundo limpo aumenta foco no produto.",
+    "Posts com antes/depois funcionam bem em estética.",
+    "Experimente variar horários de postagem.",
+    "Textos na imagem devem ser legíveis em mobile.",
+    "Fotos em alta resolução passam profissionalismo.",
+    "Variação de ângulos traz criatividade."
+  ],
+  "alerta_risco": [
+    "Evite fundos com muitas pessoas.",
+    "Evite textos ofensivos na imagem.",
+    "Exposição excessiva reduz percepção de qualidade.",
+    "Cuidado com sinais e gestos ao fundo.",
+    "Cuidado com elementos de marca concorrente na imagem.",
+    "Evite roupas com frases controversas.",
+    "Cuidado com símbolos potencialmente ofensivos.",
+    "Textos longos perdem atenção no feed.",
+    "Evite filtros pesados em fotos profissionais.",
+    "Cuidado com marcas d’água excessivas."
+  ],
+  "sugestao_melhoria": [
+    "Cores quentes destacam produtos de moda.",
+    "Use contrastes sutis para destacar o produto.",
+    "Detalhes limpos inspiram mais confiança.",
+    "Fotos com movimento transmitem dinamismo.",
+    "Reforce sua bio com CTA para contato comercial.",
+    "Cores neutras funcionam bem para serviços premium.",
+    "Mostrar processo de trabalho gera confiança.",
+    "Evite cortes que removam parte importante do produto.",
+    "Mantenha padrão de edição para feed harmônico.",
+    "Analise métricas do post anterior para aprender."
+  ]
+}
