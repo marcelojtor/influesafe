@@ -1,0 +1,22 @@
+[
+  {"id":1,"key":"influencer","title":"Influenciador","subtitle":"Criador de Conteúdo","phrase":"Olá! Vamos aumentar seu alcance e tornar suas postagens mais virais.","icon":{"lib":"lucide","name":"smartphone"}},
+  {"id":2,"key":"advogado","title":"Advogado","subtitle":"Prof. do Direito","phrase":"Olá, Doutor — vamos reforçar sua autoridade e transmitir credibilidade.","icon":{"lib":"lucide","name":"gavel"}},
+  {"id":3,"key":"medico","title":"Médico","subtitle":"Prof. da Saúde","phrase":"Olá, Doutor — sua imagem inspira confiança; vamos reforçá-la com precisão.","icon":{"lib":"lucide","name":"stethoscope"}},
+  {"id":4,"key":"esteticista","title":"Esteticista","subtitle":"Beleza e estética","phrase":"Olá! Vamos destacar seu trabalho e atrair mais clientes com imagem profissional.","icon":{"lib":"lucide","name":"sparkles"}},
+  {"id":5,"key":"cabeleireiro","title":"Cabeleireiro","subtitle":"Salão de Beleza","phrase":"Olá! Vamos cuidar da imagem do seu salão e do seu portfólio de serviços.","icon":{"lib":"lucide","name":"scissors"}},
+  {"id":6,"key":"bar_owner","title":"Dono de Bar","subtitle":"Bares e Bistrôs","phrase":"Saudações! Vamos tornar suas fotos convidativas e atrair mais público para seu espaço.","icon":{"lib":"lucide","name":"cup"}},
+  {"id":7,"key":"commerce","title":"Comércio Geral","subtitle":"Lojista/Comércio","phrase":"Olá! Vamos valorizar seu produto e transformar fotos em vendas.","icon":{"lib":"lucide","name":"shopping-bag"}},
+  {"id":8,"key":"restaurante","title":"Restaurante","subtitle":"Gastronomia","phrase":"Vamos deixar seus pratos irresistíveis no feed e aumentar reservas.","icon":{"lib":"lucide","name":"chef-hat"}},
+  {"id":9,"key":"lojista_roupas","title":"Loja de Roupas","subtitle":"Varejo de Moda","phrase":"Vamos destacar o caimento e o lifestyle das peças para atrair clientes.","icon":{"lib":"lucide","name":"t-shirt"}},
+  {"id":10,"key":"fotografo","title":"Fotógrafo","subtitle":"Foto Profissional","phrase":"Olá! Vamos otimizar seu portfólio para captar clientes e oportunidades.","icon":{"lib":"lucide","name":"camera"}},
+  {"id":11,"key":"profissional_livre","title":"Profissional Liberal","subtitle":"Médicos/Advogados/Consultores","phrase":"Profissional dedicado — vamos consolidar sua imagem de confiança.","icon":{"lib":"lucide","name":"briefcase"}},
+  {"id":12,"key":"porteiro_servicos","title":"Serviços Técnicos","subtitle":"Eletricista/Encanador","phrase":"Sua reputação local importa — vamos deixá-la mais atraente para clientes.","icon":{"lib":"lucide","name":"tool"}},
+  {"id":13,"key":"beleza_masc","title":"Barbearia","subtitle":"Cuidados Masculinos","phrase":"Vamos fortalecer o estilo do seu serviço e atrair clientes fiéis.","icon":{"lib":"lucide","name":"activity"}},
+  {"id":14,"key":"academia","title":"Academia","subtitle":"Fitness e Bem-estar","phrase":"Fotos que inspiram resultados vendem mais — vamos garantir isso pra você.","icon":{"lib":"lucide","name":"dumbbell"}},
+  {"id":15,"key":"confeitaria","title":"Confeitaria","subtitle":"Doces e Bolos","phrase":"Vamos transformar suas sobremesas em desejo visual para clientes.","icon":{"lib":"lucide","name":"cupcake"}},
+  {"id":16,"key":"imobiliaria","title":"Imobiliário","subtitle":"Corretor/Imóveis","phrase":"Imagens que vendem confiança aceleram negócios — vamos melhorar isso.","icon":{"lib":"lucide","name":"home"}},
+  {"id":17,"key":"tecnologia","title":"Tech / Startups","subtitle":"Empreendedor Tech","phrase":"Sua imagem profissional precisa passar inovação — vamos alinhar isso.","icon":{"lib":"lucide","name":"cpu"}},
+  {"id":18,"key":"beleza_mobile","title":"Delivery / Food Truck","subtitle":"Serviços Mobile","phrase":"Fotos que mostram movimento e sabor geram engajamento — vamos garantir isso.","icon":{"lib":"lucide","name":"truck"}},
+  {"id":19,"key":"educacao","title":"Educação","subtitle":"Professores / Cursos","phrase":"Vamos mostrar autoridade pedagógica e confiança nas suas comunicações.","icon":{"lib":"lucide","name":"book"}},
+  {"id":20,"key":"turismo","title":"Turismo / Hospedagem","subtitle":"Pousadas e Agências","phrase":"Vamos destacar experiências visuais que vendem viagens e estadias.","icon":{"lib":"lucide","name":"map-pin"}}
+]
