@@ -202,3 +202,102 @@ a:hover{text-decoration:underline}
   }
   .hero-copy{position:relative; top:.1rem}
 }
+
+/* ===== Personas Carousel (adição mínima) ===== */
+.pc-wrap{
+  position:relative;
+  background:linear-gradient(180deg, rgba(17,24,39,.45), rgba(15,23,42,.35));
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding: .8rem .6rem 1.2rem;
+  box-shadow:0 10px 30px rgba(0,0,0,.35);
+  overflow:hidden;
+}
+.pc-head{display:flex;align-items:baseline;gap:.5rem;margin:0 0 .4rem .2rem}
+.pc-title{font-size:1.05rem;margin:0}
+.pc-hint{font-size:.9rem}
+
+.pc-track{
+  display:flex; gap:.6rem; overflow:auto; padding:.2rem .2rem .6rem;
+  scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch;
+  scrollbar-width:thin;
+}
+.pc-track:focus{outline:none; box-shadow:0 0 0 3px rgba(59,130,246,.22); border-radius:12px;}
+
+/* Card */
+.pc-card{
+  scroll-snap-align:start;
+  width:150px; min-height:140px;
+  background:rgba(255,255,255,.06);
+  border:1px solid var(--border-soft);
+  border-radius:14px;
+  padding:.7rem .7rem .75rem;
+  text-align:left; color:#fff; cursor:pointer;
+  transition:transform .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.pc-card:hover{ transform:scale(1.035); box-shadow:0 10px 24px rgba(0,0,0,.35); }
+.pc-card:active{ transform:scale(1.01); }
+.pc-ico{ width:40px; height:40px; display:grid; place-items:center; margin-bottom:.35rem; }
+.pc-ico.pulse{ animation:pcPulse .6s ease; }
+@keyframes pcPulse { 0%{transform:scale(1)} 50%{transform:scale(1.15)} 100%{transform:scale(1)} }
+.pc-ttl{ font-weight:700; font-size:.98rem; line-height:1.15; }
+.pc-sub{ color:var(--muted); font-size:.85rem; margin-top:.15rem }
+.pc-phrase{ color:#dbe7ff; font-size:.86rem; margin-top:.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+
+/* Dots */
+.pc-dots{ display:flex; gap:.35rem; justify-content:center; margin-top:.4rem }
+.pc-dot{ width:6px; height:6px; border-radius:999px; background:rgba(200,220,255,.25) }
+.pc-dot.active{ background:#cfe2ff }
+
+/* “ver mais” */
+.pc-more{
+  position:absolute; right:.6rem; bottom:.55rem; font-size:.9rem;
+  background:rgba(6,13,30,.6); color:#e8f1ff; border:1px solid var(--border-soft);
+  border-radius:999px; padding:.35rem .6rem; cursor:pointer;
+}
+.pc-more:hover{ filter:brightness(1.05) }
+
+/* Fades laterais */
+.pc-fade{
+  position:absolute; top:0; bottom:2.1rem; width:40px; pointer-events:none;
+  background:linear-gradient(90deg, rgba(11,18,38,0.9), rgba(11,18,38,0));
+}
+.pc-fade-left{ left:0; }
+.pc-fade-right{
+  right:0; transform:scaleX(-1);
+}
+
+/* Modal */
+.persona-modal-backdrop{
+  position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:60;
+}
+.persona-modal-backdrop.show{ display:block; }
+.persona-modal{
+  position:fixed; inset:0; display:none; place-items:center; z-index:70; pointer-events:none;
+}
+.persona-modal.show{ display:grid; }
+.persona-modal-panel{
+  pointer-events:auto; width:min(720px,92vw);
+  background:linear-gradient(180deg, rgba(20,25,40,.95), rgba(10,12,20,.95));
+  border:1px solid var(--border-soft); border-radius:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.55);
+  padding:1rem 1rem 1.1rem;
+}
+.persona-modal-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:.6rem }
+.persona-grid{
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  gap:.6rem;
+}
+.persona-item{
+  background:rgba(255,255,255,.06); border:1px solid var(--border-soft);
+  border-radius:12px; padding:.6rem; text-align:left; cursor:pointer; transition:.18s;
+}
+.persona-item:hover{ transform:translateY(-1px); box-shadow:0 10px 20px rgba(0,0,0,.35) }
+.pi-ico{ margin-bottom:.35rem }
+.pi-ttl{ font-weight:700; }
+.pi-sub{ color:var(--muted); font-size:.9rem }
+
+/* Responsivo */
+@media (min-width: 900px){
+  .pc-card{ width:200px; }
+}
