@@ -34,6 +34,20 @@
           Enviar foto (JPG/PNG)
         </button>
 
+        <!-- ✅ INSERÇÃO MÍNIMA: pré-visualização compacta + botão LIMPAR -->
+        <div id="photo-preview-wrap" style="display:none;margin-top:.6rem;">
+          <div style="display:flex;align-items:center;gap:.6rem;">
+            <img
+              id="photo-preview"
+              alt="Prévia da foto"
+              width="96" height="96"
+              style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid rgba(148,163,184,.25);background:rgba(255,255,255,.04);box-shadow:0 4px 14px rgba(0,0,0,.25);"
+            />
+            <button type="button" id="btn-clear-photo" class="btn btn-ghost" aria-label="Limpar prévia da foto">LIMPAR</button>
+          </div>
+        </div>
+        <!-- 🔚 INSERÇÃO MÍNIMA -->
+
         <div class="field" style="margin-top:.75rem;">
           <label for="intent" class="label">
             O que você quer que o INFLUE responda? <span class="muted">(até 140 caracteres)</span>
