@@ -20,13 +20,21 @@
 
   <header class="topbar">
     <div class="container flex between center-v topbar-row">
-      <a class="brand flex center-v" href="/" aria-label="Ir para início">
-        <img class="logo-img" src="/static/logo/influe_logo.png" alt="INFLUE" width="34" height="34" loading="eager" decoding="async" />
-        <span class="brandtext" style="display:flex;flex-direction:column;line-height:1;">
-          <strong>INFLUE</strong>
-          <small class="muted" style="font-size:.75rem;margin-top:.15rem;">Bem-vindo ao INFLUE</small>
-        </span>
-      </a>
+      <div class="flex center-v" style="gap:.5rem;">
+        <!-- Botão de 3 pontinhos (abre/fecha sidebar) -->
+        <button id="sidebar-toggle" class="btn btn-icon" type="button" aria-label="Abrir painel"
+                title="Abrir painel" style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:999px;background:rgba(31,128,255,.25);border:1px solid rgba(148,163,184,.25);color:#fff;">
+          <span style="font-size:18px;letter-spacing:2px;line-height:0;">•••</span>
+        </button>
+
+        <a class="brand flex center-v" href="/" aria-label="Ir para início">
+          <img class="logo-img" src="/static/logo/influe_logo.png" alt="INFLUE" width="34" height="34" loading="eager" decoding="async" />
+          <span class="brandtext" style="display:flex;flex-direction:column;line-height:1;">
+            <strong>INFLUE</strong>
+            <small class="muted" style="font-size:.75rem;margin-top:.15rem;">Bem-vindo ao INFLUE</small>
+          </span>
+        </a>
+      </div>
 
       <nav class="auth flex wrap center-v" style="gap:.5rem;">
         <span id="user-state" class="pill" title="Estado de sessão">
@@ -66,10 +74,89 @@
     </div>
   </footer>
 
+  <!-- Overlay e Sidebar (estrutura; conteúdo preenchido via JS) -->
+  <div id="influe-sidebar-overlay" aria-hidden="true"></div>
+  <aside id="influe-sidebar" aria-hidden="true" aria-label="Painel do usuário INFLUE">
+    <div class="sidebar-header">
+      <div class="title">📊 Sidebar Inteligente</div>
+      <button id="sidebar-close" class="btn btn-ghost" type="button" aria-label="Fechar">Fechar</button>
+    </div>
+
+    <div class="sidebar-content">
+      <!-- 1. Raipômetro -->
+      <section id="sb-raipometro" class="sb-card">
+        <div class="sb-card-title">⚡ Raipômetro</div>
+        <div id="sb-rai-thermo" class="thermo">
+          <div class="thermo-bar"><span class="thermo-pct">0%</span></div>
+        </div>
+        <div class="sb-metrics">
+          <div><small class="muted">Média das últimas fotos</small><div id="sb-rai-media" class="metric">—</div></div>
+          <div><small class="muted">Tendência</small><div id="sb-rai-trend" class="metric">—</div></div>
+        </div>
+        <p id="sb-rai-msg" class="muted" style="margin-top:.5rem;">—</p>
+      </section>
+
+      <!-- 2. Novas análises -->
+      <section class="sb-card">
+        <div class="sb-card-title">📷 Novas Análises</div>
+        <button id="sb-new-analysis" class="btn btn-primary" type="button">+ Nova Análise</button>
+        <div id="sb-credits-chip" class="chip" style="margin-top:.5rem;">Créditos: —</div>
+        <small class="muted" title="Cada análise consome 1 crédito. Você ganha 3 créditos ao se cadastrar.">
+          Cada análise consome 1 crédito. Você ganha 3 créditos ao se cadastrar.
+        </small>
+      </section>
+
+      <!-- 3. Últimas análises -->
+      <section class="sb-card">
+        <div class="sb-card-title">🕓 Últimas Análises</div>
+        <ul id="sb-last-list" class="sb-list"></ul>
+      </section>
+
+      <!-- 4. Histórico -->
+      <section class="sb-card">
+        <div class="sb-card-title">📁 Histórico</div>
+        <div class="sb-filters">
+          <select id="sb-filter-type" aria-label="Filtrar por tipo">
+            <option value="">Todos</option>
+            <option value="photo">Foto</option>
+            <option value="text">Texto</option>
+          </select>
+          <select id="sb-filter-status" aria-label="Filtrar por status">
+            <option value="">Todos</option>
+            <option value="pos">Positiva</option>
+            <option value="neu">Neutra</option>
+            <option value="risco">Risco</option>
+          </select>
+        </div>
+        <div id="sb-hist-count" class="muted" style="margin:.5rem 0;">Total de análises realizadas: —</div>
+        <button id="sb-export" class="btn btn-outline" type="button" disabled title="Função disponível em breve">
+          Exportar PDF
+        </button>
+      </section>
+
+      <!-- 5. Créditos & Atividade -->
+      <section class="sb-card">
+        <div class="sb-card-title">💳 Créditos & Atividade (60 dias)</div>
+        <div id="sb-donut" class="donut-wrap" aria-label="Resumo de créditos">
+          <!-- SVG dinâmico via JS -->
+        </div>
+        <ul id="sb-credits-msgs" class="muted" style="margin-top:.5rem;"></ul>
+      </section>
+
+      <!-- 6. Rodapé informativo -->
+      <section class="sb-card" style="opacity:.9;">
+        <small class="muted">
+          O portal INFLUE é seu assistente inteligente de imagem. Proteja sua marca e amplifique seu impacto digital.
+          <a class="link" href="/privacy">Saiba mais</a>
+        </small>
+      </section>
+    </div>
+  </aside>
+
   <!-- Modal backdrop -->
   <div id="auth-backdrop" class="modal-backdrop" aria-hidden="true"></div>
 
-  <!-- Modal de Autenticação -->
+  <!-- Modal de Autenticação (inalterado) -->
   <section id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true">
     <div class="panel">
       <div class="flex between center-v">
