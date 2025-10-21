@@ -107,47 +107,85 @@
   })();
 
   // -----------------------------
-  // Sidebar CSS (injeção isolada)
+  // Sidebar CSS (injeção isolada) — com glassmorphism
   // -----------------------------
   (function injectSidebarCSS() {
     if (document.getElementById("influe-sidebar-css")) return;
     const css = `
     /* Overlay */
     #influe-sidebar-overlay{
-      position:fixed;inset:0;background:rgba(0,0,0,.3);backdrop-filter:blur(1px);
+      position:fixed;inset:0;background:rgba(0,0,0,.35);backdrop-filter:blur(2px);
       opacity:0;pointer-events:none;transition:opacity .4s cubic-bezier(0.22,1,0.36,1);z-index:8000;
     }
     #influe-sidebar-overlay.show{opacity:1;pointer-events:auto;}
 
-    /* Sidebar */
+    /* Sidebar — vidro */
     #influe-sidebar{
       position:fixed;top:0;left:0;height:100vh;width:320px;max-width:90vw;
       transform:translateX(-105%);transition:transform .4s cubic-bezier(0.22,1,0.36,1);
-      background:linear-gradient(180deg,#0A1C3E 0%, #07142c 100%);
-      color:#e8f1ff;border-right:1px solid rgba(148,163,184,.18);
-      box-shadow:12px 0 30px rgba(0,0,0,.35);z-index:9000;border-top-right-radius:16px;border-bottom-right-radius:16px;
+      background:linear-gradient(180deg, rgba(10,28,62,.55) 0%, rgba(7,20,44,.45) 100%);
+      color:#e8f1ff;border-right:1px solid rgba(255,255,255,.16);
+      box-shadow:12px 0 40px rgba(0,0,0,.35);
+      z-index:9000;border-top-right-radius:16px;border-bottom-right-radius:16px;
       display:flex;flex-direction:column;
+      backdrop-filter:blur(14px) saturate(140%);
+      -webkit-backdrop-filter:blur(14px) saturate(140%);
     }
     #influe-sidebar.show{transform:translateX(0);}
 
     .sidebar-header{
-      display:flex;align-items:center;justify-content:space-between;padding:.9rem 1rem;border-bottom:1px solid rgba(148,163,184,.18)
+      display:flex;align-items:center;justify-content:space-between;padding:.9rem 1rem;
+      border-bottom:1px solid rgba(255,255,255,.12);
+      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+      backdrop-filter:blur(8px) saturate(130%);
+      -webkit-backdrop-filter:blur(8px) saturate(130%);
+      border-top-right-radius:16px;
     }
     .sidebar-header .title{font-weight:700}
     .sidebar-content{padding:1rem;overflow:auto}
-    .sb-card{background:rgba(255,255,255,.04);border:1px solid rgba(148,163,184,.18);border-radius:16px;padding:.9rem;margin-bottom:1rem;box-shadow:0 4px 16px rgba(0,0,0,.15)}
+
+    /* Cards — vidro com sombra suave e brilho interno */
+    .sb-card{
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.18);
+      border-radius:16px;padding:.9rem;margin-bottom:1rem;
+      box-shadow:
+        0 10px 24px rgba(0,0,0,.25),
+        inset 0 1px 0 rgba(255,255,255,.08),
+        inset 0 -1px 0 rgba(0,0,0,.12);
+      backdrop-filter:blur(12px) saturate(135%);
+      -webkit-backdrop-filter:blur(12px) saturate(135%);
+    }
     .sb-card-title{font-weight:600;margin-bottom:.5rem;color:#A8D8FF}
+
     .sb-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.5rem}
-    .sb-item{display:flex;align-items:center;gap:.6rem;background:rgba(255,255,255,.03);border:1px solid rgba(148,163,184,.15);border-radius:12px;padding:.5rem .6rem}
-    .sb-thumb{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#1F80FF,#3CAEFF);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:.8rem}
+    .sb-item{
+      display:flex;align-items:center;gap:.6rem;
+      background:rgba(255,255,255,.05);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:12px;padding:.5rem .6rem;
+      box-shadow:0 6px 14px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06);
+      backdrop-filter:blur(10px) saturate(130%); -webkit-backdrop-filter:blur(10px) saturate(130%);
+    }
+    .sb-thumb{
+      width:34px;height:34px;border-radius:8px;
+      background:linear-gradient(135deg,#1F80FF,#3CAEFF);
+      display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:.8rem;
+      box-shadow:0 8px 18px rgba(31,128,255,.35);
+    }
     .sb-meta{display:flex;flex-direction:column;line-height:1.2}
     .sb-meta small{opacity:.8}
-    .sb-chip{padding:.1rem .4rem;border-radius:999px;font-size:.75rem;border:1px solid rgba(148,163,184,.25)}
+    .sb-chip{padding:.1rem .4rem;border-radius:999px;font-size:.75rem;border:1px solid rgba(148,163,184,.25);background:rgba(255,255,255,.05);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
     .sb-filters{display:flex;gap:.5rem;margin-bottom:.5rem}
-    .sb-filters select{background:#0f224b;border:1px solid rgba(148,163,184,.25);color:#e8f1ff;border-radius:10px;padding:.35rem .5rem}
+    .sb-filters select{
+      background:rgba(15,34,75,.6);
+      border:1px solid rgba(148,163,184,.25);
+      color:#e8f1ff;border-radius:10px;padding:.35rem .5rem;
+      backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)
+    }
     .chip{display:inline-flex;align-items:center;gap:.25rem;background:rgba(31,128,255,.15);border:1px solid rgba(60,174,255,.35);padding:.2rem .5rem;border-radius:999px;color:#A8D8FF}
-    .thermo{position:relative;height:14px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden}
-    .thermo-bar{height:100%;width:0%;background:linear-gradient(90deg,#1F80FF,#3CAEFF);box-shadow:0 0 16px rgba(60,174,255,.45) inset;position:relative;transition:width .6s ease}
+    .thermo{position:relative;height:14px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.08), inset 0 -1px 0 rgba(0,0,0,.15)}
+    .thermo-bar{height:100%;width:0%;background:linear-gradient(90deg,#1F80FF,#3CAEFF);box-shadow:0 0 16px rgba(60,174,255,.45) inset, 0 4px 10px rgba(60,174,255,.25);position:relative;transition:width .6s ease}
     .thermo-pct{position:absolute;right:6px;top:-22px;font-size:.8rem;color:#A8D8FF}
     .metric{font-weight:700}
     .donut-wrap{display:flex;align-items:center;justify-content:center;height:140px}
